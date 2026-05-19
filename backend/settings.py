@@ -5,22 +5,26 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# --- Helper Functions for Environment Variables ---
+def get_bool_env(name, default=False):
+    """Safely parse boolean environment variables."""
+    return str(os.getenv(name, str(default))).lower() in ('true', '1', 't', 'yes', 'y')
+
+def get_list_env(name, default=''):
+    """Safely parse comma-separated lists from environment variables."""
+    return [x.strip() for x in os.getenv(name, default).split(',') if x.strip()]
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv('SECRET_KEY', 'your-fallback-dev-key')
+SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-fallback-dev-key-change-in-prod')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-# Defaults to True locally, but you MUST set DEBUG=False in Render Environment Variables
-DEBUG = os.getenv('DEBUG', 'True') == 'True'
+DEBUG = get_bool_env('DEBUG', True)
 
-# Dynamically parse Allowed Hosts from environment variables
-ALLOWED_HOSTS_ENV = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1')
-ALLOWED_HOSTS = ALLOWED_HOSTS_ENV.split(',')
-
-MEDIA_URL = 'media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+ALLOWED_HOSTS = get_list_env('ALLOWED_HOSTS', 'localhost,127.0.0.1')
 
 # Application definition
 INSTALLED_APPS = [
@@ -80,12 +84,13 @@ if DATABASE_URL:
         )
     }
 else:
+    # Local Dev Fallback (Requires PostgreSQL locally)
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.postgresql',
-            'NAME': os.getenv('DB_NAME'),
-            'USER': os.getenv('DB_USER'),
-            'PASSWORD': os.getenv('DB_PASSWORD'),
+            'NAME': os.getenv('DB_NAME', 'postgres'),
+            'USER': os.getenv('DB_USER', 'postgres'),
+            'PASSWORD': os.getenv('DB_PASSWORD', 'postgres'),
             'HOST': os.getenv('DB_HOST', 'localhost'),
             'PORT': os.getenv('DB_PORT', '5432'),
         }
@@ -118,10 +123,12 @@ STATIC_URL = 'static/'
 # Required by Render to collect static files during deployment
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
+MEDIA_URL = 'media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
 # CORS Configuration
 # Dynamically parse allowed origins so Vercel can communicate with Render
-CORS_ORIGINS_ENV = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:5173')
-CORS_ALLOWED_ORIGINS = CORS_ORIGINS_ENV.split(',')
+CORS_ALLOWED_ORIGINS = get_list_env('CORS_ALLOWED_ORIGINS', 'http://localhost:5173')
 
 AUTH_USER_MODEL = 'api.CustomUser'
 
@@ -152,3 +159,19 @@ EMAIL_HOST_USER = os.getenv('BREVO_SMTP_LOGIN')
 EMAIL_HOST_PASSWORD = os.getenv('BREVO_SMTP_PASSWORD')
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'noreply@vrai-besoin.me')
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
+
+# --- Production Security Settings ---
+if not DEBUG:
+    # Honor the 'X-Forwarded-Proto' header for request.is_secure()
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    
+    # Enforce SSL redirects (disable this if your host does it at the load balancer level and causes a loop)
+    SECURE_SSL_REDIRECT = get_bool_env('SECURE_SSL_REDIRECT', True)
+    
+    # Secure Cookies
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    
+    # Security Headers
+    SECURE_BROWSER_XSS_FILTER = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
