@@ -82,41 +82,25 @@ def default_socio_pro():
 
 # L'utilisateur personalisé
 class CustomUser(AbstractUser):
-    monthly_budget = models.CharField(
-        max_length=50,
-        choices=BudgetChoices.choices,
-        null=True,
-        blank=True
-    )
-    profession = models.CharField(max_length=150, null=True, blank=True)
-    socio_professional_categories = models.JSONField(
-        default=default_socio_pro,
-        null=True,
-        blank=True,
-        help_text=_("Catégories socio-professionnelles (max 3)")
-    )
-    birth_date = models.DateField(null=True, blank=True)
-    financial_goals = ArrayField(
-        models.CharField(max_length=200),
-        size=3,
-        blank=True,
-        null=True,
-        default=list
-    )
-    last_ip_address = models.GenericIPAddressField(null=True, blank=True)
-    location_data = models.JSONField(default=dict, blank=True)
-    cooldown_preference = models.IntegerField(
-        default=24,
-        help_text=_("Temps de réflexion par défaut en heures (12, 24, 48, 72)")
-    )
-    preferred_currency = models.CharField(max_length=3, default='TND')
+    """
+    Modèle d'utilisateur personnalisé pour l'application Vrai Besoin.
+    Remplace le 'username' classique par l'adresse e-mail comme identifiant principal
+    et intègre les données de profilage financier et psychologique.
+    """
+
+    # ==============================================================================
+    # 1. PARAMÈTRES D'AUTHENTIFICATION DJANGO
+    # ==============================================================================
     username = None
     email = models.EmailField(_('email address'), unique=True)
+
     USERNAME_FIELD = 'email'
-    is_onboarded = models.BooleanField(default=False)
     REQUIRED_FIELDS = []
     objects = CustomUserManager()
 
+    # ==============================================================================
+    # 2. ÉNUMÉRATIONS (CHOICES)
+    # ==============================================================================
     class AuthProviders(models.TextChoices):
         EMAIL = 'EMAIL', _('Email')
         GOOGLE = 'GOOGLE', _('Google')
@@ -126,12 +110,53 @@ class CustomUser(AbstractUser):
         BALANCED = 'Équilibré', _('Équilibré')
         RUTHLESS = 'Impitoyable', _('Impitoyable')
 
+    # ==============================================================================
+    # 3. PROFIL PERSONNEL ET SOCIO-PROFESSIONNEL
+    # ==============================================================================
+    birth_date = models.DateField(null=True, blank=True)
+    profession = models.CharField(max_length=150, null=True, blank=True)
+    socio_professional_categories = models.JSONField(
+        default=default_socio_pro,
+        null=True,
+        blank=True,
+        help_text=_("Catégories socio-professionnelles (max 3)")
+    )
+
+    # ==============================================================================
+    # 4. PROFIL FINANCIER ET PARAMÈTRES DE COACHING IA
+    # ==============================================================================
+    monthly_budget = models.CharField(
+        max_length=50,
+        choices=BudgetChoices.choices,
+        null=True,
+        blank=True
+    )
+    financial_goals = ArrayField(
+        models.CharField(max_length=200),
+        size=3,
+        blank=True,
+        null=True,
+        default=list
+    )
+    preferred_currency = models.CharField(max_length=3, default='TND')
     evaluation_rigor = models.CharField(
         max_length=20,
         choices=RigorChoices.choices,
         default=RigorChoices.BALANCED,
         help_text=_("Niveau de rigueur du coach IA")
     )
+    cooldown_preference = models.IntegerField(
+        default=24,
+        help_text=_("Temps de réflexion par défaut en heures (12, 24, 48, 72)")
+    )
+    wants_cooldown_reminders = models.BooleanField(
+        default=True,
+        help_text=_("Recevoir une alerte avant la fin de la période de réflexion")
+    )
+
+    # ==============================================================================
+    # 5. DONNÉES TECHNIQUES ET TRAÇABILITÉ
+    # ==============================================================================
     auth_provider = models.CharField(
         max_length=10,
         choices=AuthProviders.choices,
@@ -139,23 +164,28 @@ class CustomUser(AbstractUser):
         help_text=_("Méthode d'inscription utilisée par l'utilisateur")
     )
     google_id = models.CharField(max_length=255, null=True, blank=True, unique=True)
-    wants_cooldown_reminders = models.BooleanField(
-        default=True,
-        help_text=_("Recevoir une alerte avant la fin de la période de réflexion")
-    )
+    is_onboarded = models.BooleanField(default=False)
+    last_ip_address = models.GenericIPAddressField(null=True, blank=True)
+    location_data = models.JSONField(default=dict, blank=True)
     history_cleared_at = models.DateTimeField(
         null=True,
         blank=True,
         help_text=_("Date de la dernière réinitialisation de l'historique (Soft Delete)")
     )
 
+    # ==============================================================================
+    # 6. MÉTHODES SURCHARGÉES
+    # ==============================================================================
     def delete(self, *args, **kwargs):
-        # Désactive le compte au lieu de le supprimer ( Soft delete )
+        """
+        Surcharge de la méthode de suppression pour appliquer un Soft Delete.
+        Le compte est désactivé au lieu d'être supprimé définitivement de la base.
+        """
         self.is_active = False
         self.save()
 
     def __str__(self):
-        return self.email or self.username
+        return self.email
 
 
 class ProductCategoryChoices(models.TextChoices):
@@ -307,10 +337,11 @@ class PurchaseIntention(models.Model):
                     output.seek(0)
 
                     # Replace the original uploaded file with the compressed one
+                    name_without_ext = self.product_image.name.rsplit('.', 1)[0] if '.' in self.product_image.name else self.product_image.name
                     self.product_image = InMemoryUploadedFile(
                         output,
                         'ImageField',
-                        f"{self.product_image.name.split('.')[0]}.jpg",
+                        f"{name_without_ext}.jpg",
                         'image/jpeg',
                         sys.getsizeof(output),
                         None

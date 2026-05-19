@@ -32,10 +32,12 @@ INSTALLED_APPS = [
     'rest_framework',
     'corsheaders',
     'api.apps.ApiConfig',
-    'django.contrib.postgres'
+    'django.contrib.postgres',
+    #'silk'
 ]
 
 MIDDLEWARE = [
+    #'silk.middleware.SilkyMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -113,7 +115,7 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
-
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 # Ici on autorise le projet Vue JS à communiquer avec Django
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
@@ -148,3 +150,9 @@ EMAIL_HOST_USER = os.getenv('BREVO_SMTP_LOGIN')
 EMAIL_HOST_PASSWORD = os.getenv('BREVO_SMTP_PASSWORD')
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'noreply@vrai-besoin.me')
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
+
+
+SILKY_AUTHENTICATION = False
+SILKY_AUTHORISATION = False
+SILKY_MAX_REQUEST_BODY_SIZE = 1024  # kb
+SILKY_MAX_RESPONSE_BODY_SIZE = 1024 # kb
