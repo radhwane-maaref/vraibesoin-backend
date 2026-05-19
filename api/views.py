@@ -112,7 +112,8 @@ class LoginView(APIView):
 
         if user is not None:
             # Lancer la tâche en arrière-plan pour préparer le message du coach
-            threading.Thread(target=fetch_and_cache_daily_advice, args=(user.id,)).start()
+            from api.tasks import fetch_and_cache_daily_advice_task
+            fetch_and_cache_daily_advice_task.delay(user.id)
             
             tokens = get_user_tokens(user)
             return Response({
@@ -745,7 +746,7 @@ class PurchaseHistoryView(generics.ListAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        queryset = PurchaseIntention.objects.filter(user=user)
+        queryset = PurchaseIntention.objects.filter(user=user).prefetch_related('questions')
         if user.history_cleared_at:
             queryset = queryset.filter(created_at__gte=user.history_cleared_at)
 

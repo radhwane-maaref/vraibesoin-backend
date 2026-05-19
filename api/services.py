@@ -27,7 +27,7 @@ def verify_google_token(token: str) -> dict:
         idinfo = id_token.verify_oauth2_token(
             token,
             google_requests.Request(),
-            settings.GOOGLE_CLIENT_ID  # Ensure this is defined in your settings.py
+            settings.GOOGLE_OAUTH_CLIENT_ID  # Ensure this is defined in your settings.py
         )
 
         # Returns the decoded JWT payload (e.g., idinfo['email'], idinfo['sub'])
@@ -44,14 +44,8 @@ def send_password_reset_email(email: str, reset_url: str):
     subject = "Vrai Besoin - Réinitialisation de votre mot de passe"
     message = f"Bonjour,\n\nVous avez demandé la réinitialisation de votre mot de passe. Cliquez sur le lien suivant : {reset_url}\n\nSi vous n'êtes pas à l'origine de cette demande, ignorez cet e-mail."
 
-    send_mail(
-        subject=subject,
-        message=message,
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[email],
-        fail_silently=False,
-    )
-    threading.Thread(target=send_mail, args=(reset_url,)).start()
+    from api.tasks import send_email_task
+    send_email_task.delay(subject, message, [email])
 
 
 def send_otp_email(email: str, otp_code: str):
@@ -59,11 +53,8 @@ def send_otp_email(email: str, otp_code: str):
     subject = "Vrai Besoin - Votre code de vérification"
     message = f"Bonjour,\n\nVotre code de vérification à 6 chiffres est : {otp_code}\n\nCe code est valide pendant 10 minutes.\n\nL'équipe Vrai Besoin"
 
-    # Utilisation d'un thread pour envoyer l'e-mail de manière asynchrone
-    threading.Thread(
-        target=send_mail,
-        args=(subject, message, settings.DEFAULT_FROM_EMAIL, [email], False)
-    ).start()
+    from api.tasks import send_email_task
+    send_email_task.delay(subject, message, [email])
 
 
 def extract_product_data_via_ai(image_file):

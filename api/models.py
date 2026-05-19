@@ -347,9 +347,12 @@ class PurchaseIntention(models.Model):
                         None
                     )
                 except Exception as e:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Error compressing image {self.product_name}: {e}")
                     # Log the error but don't stop the save process
-                    # You might want to use your ErrorLog model here in a real app
-                    print(f"Error compressing image: {e}")
+                    from api.services import log_app_error
+                    log_app_error(e, context_message=f"Error compressing image for intention {self.id}")
 
         super().save(*args, **kwargs)
 
