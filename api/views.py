@@ -1,4 +1,6 @@
 # api/views.py
+import traceback
+
 from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -25,7 +27,7 @@ from .serializers import (
 from .models import CustomUser, ErrorLog, ReflectionQuestion, SavingsGoal, AppFeedback, \
     ProductCategoryChoices, BudgetChoices, SocioProChoices
 from .services import verify_google_token, send_password_reset_email, generate_ai_verdict, extract_product_data_via_ai, \
-    generate_reflection_questions, generate_gemini_json_response, log_app_error
+    generate_reflection_questions, generate_gemini_json_response, log_app_error, fetch_and_cache_daily_advice
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.utils import timezone
 from datetime import timedelta
@@ -34,6 +36,7 @@ from django.utils.translation import gettext_lazy as _
 from rest_framework.throttling import AnonRateThrottle
 from django.core.cache import cache
 import random
+import threading
 from .services import send_otp_email
 
 
@@ -69,7 +72,7 @@ class RegisterView(APIView):
         # Continuer avec l'inscription normale
         serializer = UserRegistrationSerializer(data=request.data)
         if serializer.is_valid():
-            user = serializer.save(auth_provider='email')
+            user = serializer.save(auth_provider=CustomUser.AuthProviders.EMAIL)
 
             # Supprimer l'OTP du cache une fois le compte créé
             cache.delete(f"otp_{email}")
@@ -94,7 +97,7 @@ class LoginView(APIView):
         # 1. Vérification préventive du fournisseur (Auth Provider)
         try:
             user_check = CustomUser.objects.get(email=email)
-            if user_check.auth_provider == 'google':
+            if user_check.auth_provider == CustomUser.AuthProviders.GOOGLE:
                 return Response(
                     {'error': _(
                         "Cette adresse e-mail est liée à Google. Veuillez utiliser le bouton 'Se connecter avec Google'.")},
@@ -108,6 +111,9 @@ class LoginView(APIView):
         user = authenticate(email=email, password=password)
 
         if user is not None:
+            # Lancer la tâche en arrière-plan pour préparer le message du coach
+            threading.Thread(target=fetch_and_cache_daily_advice, args=(user.id,)).start()
+            
             tokens = get_user_tokens(user)
             return Response({
                 'message': _('Connexion réussie.'),
@@ -147,6 +153,9 @@ class GoogleLoginView(APIView):
                 password=None,
                 auth_provider=CustomUser.AuthProviders.GOOGLE,
             )
+
+        # Lancer la tâche en arrière-plan pour préparer le message du coach
+        threading.Thread(target=fetch_and_cache_daily_advice, args=(user.id,)).start()
 
         tokens = get_user_tokens(user)
         return Response({
@@ -306,7 +315,7 @@ class RequestOTPView(APIView):
 
         return Response({"message": "Code OTP envoyé avec succès."}, status=status.HTTP_200_OK)
 class OnboardingChoicesView(APIView):
-    permission_classes = [AllowAny]  # Or IsAuthenticated depending on your flow
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         return Response({
@@ -457,7 +466,13 @@ class GenerateQuestionsView(APIView):
         except NotFound as e:
             # Let DRF handle the 404 naturally or catch it if you prefer custom formatting
             return Response({"error": str(e.detail)}, status=status.HTTP_404_NOT_FOUND)
-        except Exception:
+        except Exception as e:
+
+            print("\n" + "=" * 50)
+            print("🚨 CRASH LORS DE LA GÉNÉRATION DES QUESTIONS 🚨")
+            print(f"Type d'erreur : {type(e).__name__}")
+            traceback.print_exc()
+            print("=" * 50 + "\n")
             return Response({"error": _("L'IA n'a pas pu générer les questions. Veuillez réessayer.")},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -475,7 +490,6 @@ class GenerateVerdictView(APIView):
                 intention = get_user_intention_or_404(intention_id, request.user)
 
                 # 2. Sauvegarde des réponses envoyées par Vue.js
-                # On s'attend à recevoir : {"answers": [{"id": 1, "answer": "YES"}, ...]}
                 answers_data = request.data.get('answers', [])
                 questions_to_update = []
                 for item in answers_data:
@@ -575,26 +589,19 @@ class DashboardSummaryView(APIView):
         if user.history_cleared_at:
             base_qs = base_qs.filter(created_at__gte=user.history_cleared_at)
 
-        # 1. Économies du mois
-        monthly_savings = base_qs.filter(
-            user_final_decision=PurchaseIntention.DecisionChoices.ABANDON,
+        # 1 & 2. Consolidation des agrégations : Économies du mois et Ratio de Maîtrise
+        stats = base_qs.filter(
             created_at__year=now.year,
             created_at__month=now.month
-        ).aggregate(total=Sum('product_price'))['total'] or 0.00
-
-        # 2. Ratio de Maîtrise (Basé uniquement sur les décisions finalisées)
-        resolved_intentions = base_qs.filter(
-            created_at__year=now.year,
-            created_at__month=now.month
-        ).exclude(
-            Q(user_final_decision__isnull=True) | Q(user_final_decision=PurchaseIntention.DecisionChoices.UNKOWN)
+        ).aggregate(
+            monthly_savings=Sum('product_price', filter=Q(user_final_decision=PurchaseIntention.DecisionChoices.ABANDON)),
+            total_resolved=Count('id', filter=~Q(user_final_decision__isnull=True) & ~Q(user_final_decision=PurchaseIntention.DecisionChoices.UNKOWN)),
+            abandoned_intentions=Count('id', filter=Q(user_final_decision=PurchaseIntention.DecisionChoices.ABANDON))
         )
 
-        total_resolved = resolved_intentions.count()
-        abandoned_intentions = resolved_intentions.filter(
-            user_final_decision=PurchaseIntention.DecisionChoices.ABANDON
-        ).count()
-
+        monthly_savings = stats['monthly_savings'] or 0.00
+        total_resolved = stats['total_resolved'] or 0
+        abandoned_intentions = stats['abandoned_intentions'] or 0
         mastery_ratio = int((abandoned_intentions / total_resolved) * 100) if total_resolved > 0 else 0
 
         # 3. Objectif d'épargne actif
@@ -606,21 +613,30 @@ class DashboardSummaryView(APIView):
         } if active_goal else None
 
         # 4. Historique récent (5 derniers éléments)
-        # -> Les lignes de sérialisation manquantes étaient ici
         recent_intentions = base_qs.prefetch_related('questions').order_by('-created_at')[:5]
         history_serializer = PurchaseIntentionSerializer(recent_intentions, many=True)
 
         # 5. Analyses en attente (Bannière de rappel)
+        # N+1 Query Fixed: Added .prefetch_related('questions')
         pending_intentions = base_qs.filter(
             Q(user_final_decision__isnull=True) | Q(user_final_decision=PurchaseIntention.DecisionChoices.UNKOWN)
-        ).order_by('-created_at')
+        ).prefetch_related('questions').order_by('-created_at')
         pending_serializer = PurchaseIntentionSerializer(pending_intentions, many=True)
+        
+        # 6. Message du Coach IA (Cache + Background Task)
+        import datetime
+        today = datetime.date.today().isoformat()
+        cache_key = f"coach_message_{user.id}_{today}"
+        ai_message = cache.get(cache_key)
 
-        # Construction de la réponse unifiée
+        if not ai_message:
+            # Fallback synchrone immédiat si le cache n'est pas encore prêt
+            currency = getattr(user, 'preferred_currency', 'TND')
+            ai_message = f"Vous avez fait de superbes économies ({monthly_savings} {currency}) ce mois-ci !" if float(monthly_savings) > 0 else "Prêt à sauver votre budget aujourd'hui ?"
+
         return Response({
             "user_name": user.first_name or "Utilisateur",
-            "ai_coach_message": "Vous avez fait de superbes économies ce mois-ci !" if float(
-                monthly_savings) > 0 else "Prêt à sauver votre budget ?",
+            "ai_coach_message": ai_message,
             "mastery_ratio": mastery_ratio,
             "savings_goal": goal_data,
             "stats": {
@@ -814,7 +830,7 @@ class PurchaseIntentionDetailView(generics.RetrieveAPIView):
 
     def get_queryset(self):
         # Sécurité : l'utilisateur ne peut récupérer que ses propres intentions
-        return PurchaseIntention.objects.filter(user=self.request.user)
+        return PurchaseIntention.objects.filter(user=self.request.user).prefetch_related('questions')
 
 
 def get_user_intention_or_404(intention_id, user):

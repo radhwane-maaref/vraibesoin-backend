@@ -1,5 +1,5 @@
 # api/urls.py
-from django.urls import path
+from django.urls import path, include
 from .views import (
     RegisterView,
     LoginView,
@@ -64,4 +64,5 @@ urlpatterns = [
     path('admin-api/users/<int:user_id>/', AdminUserManagementView.as_view(), name='admin-user-update'),
     path('users/me/clear-history/', ClearHistoryView.as_view(), name='clear-history'),
     path('admin-api/stats/categories/', AdminCategoryStatsView.as_view(), name='admin-stats-categories'),
+
 ]
