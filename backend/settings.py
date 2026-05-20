@@ -45,7 +45,8 @@ INSTALLED_APPS = [
     'corsheaders',
     'api.apps.ApiConfig',
     'django.contrib.postgres',
-    #'silk'
+    #'silk',
+
 ]
 
 MIDDLEWARE = [
