@@ -6,7 +6,6 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 from django.contrib.auth.hashers import make_password
 from django.utils.translation import gettext_lazy as _
-import magic
 import json
 
 
@@ -299,19 +298,21 @@ class ProductImageExtractionSerializer(serializers.Serializer):
         max_size = 5 * 1024 * 1024
         if value.size > max_size:
             raise serializers.ValidationError(_("L'image ne doit pas dépasser 5 MB."))
+
         file_header = value.read(2048)
         value.seek(0)
+
         try:
+            import magic  # Lazy import here!
             mime = magic.Magic(mime=True)
             actual_mime_type = mime.from_buffer(file_header)
+        except ImportError:
+            raise serializers.ValidationError(
+                _("Erreur serveur: la bibliothèque de traitement d'image (libmagic) est manquante."))
         except Exception:
             raise serializers.ValidationError(_("Impossible de vérifier l'intégrité du fichier."))
-        allowed_mime_types = [
-            'image/jpeg',
-            'image/png',
-            'image/webp',
 
-        ]
+        allowed_mime_types = ['image/jpeg', 'image/png', 'image/webp']
         if actual_mime_type not in allowed_mime_types:
             raise serializers.ValidationError(
                 _("Fichier non autorisé. Seuls les formats JPEG, PNG et WEBP sont acceptés."))

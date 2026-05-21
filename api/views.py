@@ -112,8 +112,13 @@ class LoginView(APIView):
 
         if user is not None:
             # Lancer la tâche en arrière-plan pour préparer le message du coach
-            from api.tasks import fetch_and_cache_daily_advice_task
-            fetch_and_cache_daily_advice_task.delay(user.id)
+            try:
+                from api.tasks import fetch_and_cache_daily_advice_task
+                fetch_and_cache_daily_advice_task.delay(user.id)
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to queue daily advice task: {e}")
             
             tokens = get_user_tokens(user)
             return Response({

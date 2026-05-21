@@ -189,7 +189,6 @@ if not DEBUG:
     # Security Headers
     SECURE_BROWSER_XSS_FILTER = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
-ue
     CSRF_COOKIE_SECURE = True
     
     # Security Headers
