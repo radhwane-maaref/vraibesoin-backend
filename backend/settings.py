@@ -189,9 +189,8 @@ if not DEBUG:
     # Security Headers
     SECURE_BROWSER_XSS_FILTER = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
-ue
-    CSRF_COOKIE_SECURE = True
-    
-    # Security Headers
-    SECURE_BROWSER_XSS_FILTER = True
-    SECURE_CONTENT_TYPE_NOSNIFF = True
+
+# --- Celery Configuration ---
+# Run tasks synchronously in development so you don't need RabbitMQ/Redis running
+CELERY_TASK_ALWAYS_EAGER = DEBUG
+CELERY_TASK_STORE_EAGER_RESULT = DEBUG
