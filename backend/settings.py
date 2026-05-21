@@ -45,8 +45,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'api.apps.ApiConfig',
     'django.contrib.postgres',
-    #'silk',
-
+    #'silk'
 ]
 
 MIDDLEWARE = [
@@ -138,7 +137,6 @@ STORAGES = {
 }
 
 # CORS Configuration
-# Ici on autorise le projet Vue JS à communiquer avec Django
 CORS_ALLOWED_ORIGINS = get_list_env('CORS_ALLOWED_ORIGINS', 'http://localhost:5173')
 
 AUTH_USER_MODEL = 'api.CustomUser'
@@ -176,12 +174,6 @@ SILKY_AUTHORISATION = False
 SILKY_MAX_REQUEST_BODY_SIZE = 1024  # kb
 SILKY_MAX_RESPONSE_BODY_SIZE = 1024 # kb
 
-# --- Celery Configuration ---
-CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
-CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
-CELERY_ACCEPT_CONTENT = ['json']
-CELERY_TASK_SERIALIZER = 'json'
-
 # --- Production Security Settings ---
 if not DEBUG:
     # Honor the 'X-Forwarded-Proto' header for request.is_secure()
@@ -192,6 +184,12 @@ if not DEBUG:
     
     # Secure Cookies
     SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    
+    # Security Headers
+    SECURE_BROWSER_XSS_FILTER = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+ue
     CSRF_COOKIE_SECURE = True
     
     # Security Headers

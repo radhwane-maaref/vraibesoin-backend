@@ -6,8 +6,9 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 from django.contrib.auth.hashers import make_password
 from django.utils.translation import gettext_lazy as _
+import magic
 import json
-import filetype
+
 
 class OnboardingSerializer(serializers.ModelSerializer):
     class Meta:
@@ -298,28 +299,22 @@ class ProductImageExtractionSerializer(serializers.Serializer):
         max_size = 5 * 1024 * 1024
         if value.size > max_size:
             raise serializers.ValidationError(_("L'image ne doit pas dépasser 5 MB."))
-
         file_header = value.read(2048)
         value.seek(0)
-
         try:
-            # --- START OF UPDATED CODE ---
-            kind = filetype.guess(file_header)
-            actual_mime_type = kind.mime if kind is not None else None
-            # --- END OF UPDATED CODE ---
+            mime = magic.Magic(mime=True)
+            actual_mime_type = mime.from_buffer(file_header)
         except Exception:
             raise serializers.ValidationError(_("Impossible de vérifier l'intégrité du fichier."))
-
         allowed_mime_types = [
             'image/jpeg',
             'image/png',
             'image/webp',
-        ]
 
+        ]
         if actual_mime_type not in allowed_mime_types:
             raise serializers.ValidationError(
                 _("Fichier non autorisé. Seuls les formats JPEG, PNG et WEBP sont acceptés."))
-
         return value
 
 
