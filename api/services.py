@@ -2,6 +2,7 @@
 import json
 import logging
 import threading
+import requests as std_requests
 from PIL import Image
 from django.conf import settings
 from django.core.cache import cache
@@ -18,16 +19,30 @@ logger = logging.getLogger(__name__)
 
 
 def verify_google_token(token: str) -> dict:
-    """Verifies the Google JWT and extracts user info."""
+    """Verifies the Google JWT or Access Token and extracts user info."""
     if not token:
         print("❌ verify_google_token: Token is empty")
         return None
 
     try:
+        # Check if the token is an Access Token (starts with ya29.)
+        if token.startswith('ya29.'):
+            response = std_requests.get(
+                'https://www.googleapis.com/oauth2/v3/userinfo',
+                headers={'Authorization': f'Bearer {token}'}
+            )
+            if response.status_code == 200:
+                return response.json()
+            else:
+                print(f"❌ verify_google_token Access Token failed: {response.text}")
+                logger.error(f"Google Access Token verification failed: {response.text}")
+                return None
+
+        # Otherwise, treat it as an ID Token (JWT)
         client_id = settings.GOOGLE_OAUTH_CLIENT_ID
         if client_id:
             client_id = client_id.strip(' "\'')
-            
+
         # Securely verifies the token signature, expiration, and audience
         idinfo = id_token.verify_oauth2_token(
             token,
@@ -40,13 +55,12 @@ def verify_google_token(token: str) -> dict:
 
     except ValueError as e:
         # Token is invalid, expired, or has the wrong audience
-        print(f"❌ verify_google_token failed: {str(e)} | Client ID used: {client_id}")
+        print(f"❌ verify_google_token failed: {str(e)}")
         logger.error(f"Google token verification failed: {e}")
         return None
     except Exception as e:
         print(f"❌ verify_google_token unexpected error: {str(e)}")
         return None
-
 
 def send_password_reset_email(email: str, reset_url: str):
     """Sends the reset email via Brevo (configured as SMTP in settings.py)."""
