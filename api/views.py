@@ -198,7 +198,14 @@ class PasswordResetRequestAPIView(APIView):
                 reset_url = f"{frontend_url}/reset-password/{uidb64}/{token}/"
 
                 # 3. Envoyer l'e-mail via le service
-                send_password_reset_email(email, reset_url)
+                try:
+                    send_password_reset_email(email, reset_url)
+                except Exception as e:
+                    log_app_error(e, context_message="Erreur d'envoi d'e-mail de réinitialisation", endpoint_url=request.path)
+                    return Response(
+                        {'error': _("Le service d'envoi d'e-mail est momentanément indisponible. Veuillez réessayer plus tard.")},
+                        status=status.HTTP_503_SERVICE_UNAVAILABLE
+                    )
 
             except CustomUser.DoesNotExist:
                 # RÈGLE DE SÉCURITÉ : Ne jamais confirmer à un attaquant si un e-mail existe en base
