@@ -4,6 +4,7 @@ import traceback
 from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.http import HttpResponse
 from rest_framework import status, generics
 from rest_framework.exceptions import NotFound
 from rest_framework.pagination import PageNumberPagination
@@ -1212,3 +1213,11 @@ class AdminCategoryStatsView(APIView):
             "other": other_data,
             "all": all_categories
         })
+
+
+
+
+#------------
+def health_check(request):
+    "renvoie juste un mot l'objectif est de garder notre serveur render actif"
+    return HttpResponse("ok",content_type="text/plain")

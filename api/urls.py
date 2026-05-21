@@ -11,7 +11,7 @@ from .views import (
     UserFinalDecisionView, DashboardSummaryView, AppFeedbackCreateView, PurchaseHistoryView, AdminFeedbackListView,
     PurchaseIntentionDetailView, StatsDashboardAPIView, AdminGlobalStatsView, AdminSystemHealthView,
     AdminUserManagementView, CategoryListView, ClearHistoryView, AdminCategoryStatsView, OnboardingChoicesView,
-    SubmitOnboardingView, RequestOTPView
+    SubmitOnboardingView, RequestOTPView, health_check
 )
 from rest_framework_simplejwt.views import TokenRefreshView
 
@@ -64,5 +64,6 @@ urlpatterns = [
     path('admin-api/users/<int:user_id>/', AdminUserManagementView.as_view(), name='admin-user-update'),
     path('users/me/clear-history/', ClearHistoryView.as_view(), name='clear-history'),
     path('admin-api/stats/categories/', AdminCategoryStatsView.as_view(), name='admin-stats-categories'),
+    path('healthz/',health_check,name='health_check'),
 
 ]
