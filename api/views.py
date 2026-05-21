@@ -324,7 +324,11 @@ class RequestOTPView(APIView):
         cache.set(f"otp_{email}", otp_code, timeout=600)
 
         # Envoyer l'e-mail
-        send_otp_email(email, otp_code)
+        try:
+            send_otp_email(email, otp_code)
+        except Exception as e:
+            log_app_error(e, context_message="Erreur d'envoi d'e-mail OTP", endpoint_url=request.path)
+            return Response({"error": "Le service d'envoi d'e-mail est momentanément indisponible. Veuillez réessayer plus tard."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
         return Response({"message": "Code OTP envoyé avec succès."}, status=status.HTTP_200_OK)
 class OnboardingChoicesView(APIView):

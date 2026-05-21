@@ -198,6 +198,7 @@ if not DEBUG:
     SECURE_CONTENT_TYPE_NOSNIFF = True
 
 # --- Celery Configuration ---
-# Run tasks synchronously in development so you don't need RabbitMQ/Redis running
-CELERY_TASK_ALWAYS_EAGER = DEBUG
-CELERY_TASK_STORE_EAGER_RESULT = DEBUG
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL')
+# Si aucun broker n'est configuré (ex: pas de Redis sur Render), on exécute les tâches de manière synchrone
+CELERY_TASK_ALWAYS_EAGER = not bool(CELERY_BROKER_URL)
+CELERY_TASK_STORE_EAGER_RESULT = not bool(CELERY_BROKER_URL)
