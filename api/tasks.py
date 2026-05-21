@@ -18,11 +18,18 @@ def send_email_task(subject, message, recipient_list):
             recipient_list=recipient_list,
             fail_silently=False,
         )
+        print(f"✅ SUCCESS: Email sent to {recipient_list}")
         logger.info(f"Email sent successfully to {recipient_list}")
     except Exception as e:
+        import traceback
+        print(f"❌ ERROR sending email to {recipient_list}: {str(e)}")
+        traceback.print_exc()
         logger.error(f"Failed to send email to {recipient_list}: {e}")
-        from api.services import log_app_error
-        log_app_error(e, context_message=f"Erreur d'envoi d'e-mail à {recipient_list}")
+        try:
+            from api.services import log_app_error
+            log_app_error(e, context_message=f"Erreur d'envoi d'e-mail à {recipient_list}")
+        except Exception as inner_e:
+            print(f"❌ ERROR saving to ErrorLog: {str(inner_e)}")
 
 
 @shared_task
