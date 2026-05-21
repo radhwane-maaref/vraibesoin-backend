@@ -45,7 +45,11 @@ def send_password_reset_email(email: str, reset_url: str):
     message = f"Bonjour,\n\nVous avez demandé la réinitialisation de votre mot de passe. Cliquez sur le lien suivant : {reset_url}\n\nSi vous n'êtes pas à l'origine de cette demande, ignorez cet e-mail."
 
     from api.tasks import send_email_task
-    send_email_task.delay(subject, message, [email])
+    # Prevent Gunicorn timeout on Render by threading if no broker is available
+    if getattr(settings, 'CELERY_TASK_ALWAYS_EAGER', False):
+        threading.Thread(target=send_email_task, args=(subject, message, [email])).start()
+    else:
+        send_email_task.delay(subject, message, [email])
 
 
 def send_otp_email(email: str, otp_code: str):
@@ -54,7 +58,11 @@ def send_otp_email(email: str, otp_code: str):
     message = f"Bonjour,\n\nVotre code de vérification à 6 chiffres est : {otp_code}\n\nCe code est valide pendant 10 minutes.\n\nL'équipe Vrai Besoin"
 
     from api.tasks import send_email_task
-    send_email_task.delay(subject, message, [email])
+    # Prevent Gunicorn timeout on Render by threading if no broker is available
+    if getattr(settings, 'CELERY_TASK_ALWAYS_EAGER', False):
+        threading.Thread(target=send_email_task, args=(subject, message, [email])).start()
+    else:
+        send_email_task.delay(subject, message, [email])
 
 
 def extract_product_data_via_ai(image_file):
