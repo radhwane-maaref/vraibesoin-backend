@@ -20,14 +20,19 @@ logger = logging.getLogger(__name__)
 def verify_google_token(token: str) -> dict:
     """Verifies the Google JWT and extracts user info."""
     if not token:
+        print("❌ verify_google_token: Token is empty")
         return None
 
     try:
+        client_id = settings.GOOGLE_OAUTH_CLIENT_ID
+        if client_id:
+            client_id = client_id.strip(' "\'')
+            
         # Securely verifies the token signature, expiration, and audience
         idinfo = id_token.verify_oauth2_token(
             token,
             google_requests.Request(),
-            settings.GOOGLE_OAUTH_CLIENT_ID  # Ensure this is defined in your settings.py
+            client_id
         )
 
         # Returns the decoded JWT payload (e.g., idinfo['email'], idinfo['sub'])
@@ -35,7 +40,11 @@ def verify_google_token(token: str) -> dict:
 
     except ValueError as e:
         # Token is invalid, expired, or has the wrong audience
+        print(f"❌ verify_google_token failed: {str(e)} | Client ID used: {client_id}")
         logger.error(f"Google token verification failed: {e}")
+        return None
+    except Exception as e:
+        print(f"❌ verify_google_token unexpected error: {str(e)}")
         return None
 
 

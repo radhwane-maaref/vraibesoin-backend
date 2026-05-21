@@ -133,7 +133,8 @@ class GoogleLoginView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        token = request.data.get('credential')
+        # Support both 'credential' and 'token' keys for flexibility with frontend
+        token = request.data.get('credential') or request.data.get('token')
         user_data = verify_google_token(token)
 
         if not user_data:
