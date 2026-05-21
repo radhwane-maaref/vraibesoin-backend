@@ -14,7 +14,11 @@ def get_bool_env(name, default=False):
 def get_list_env(name, default=''):
     """Safely parse comma-separated lists from environment variables."""
     val = os.getenv(name, default)
-    return [x.strip() for x in val.split(',') if x.strip()]
+    if not val:
+        val = default
+    # Safely strip accidental quotes from the whole string and individual items
+    val = val.strip(' "\'')
+    return [x.strip(' "\'') for x in val.split(',') if x.strip(' "\'')]
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -29,6 +33,9 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'your-fallback-dev-key')
 DEBUG = get_bool_env('DEBUG', True)
 
 ALLOWED_HOSTS = get_list_env('ALLOWED_HOSTS', 'localhost,127.0.0.1')
+RENDER_EXTERNAL_HOSTNAME = os.getenv('RENDER_EXTERNAL_HOSTNAME')
+if RENDER_EXTERNAL_HOSTNAME:
+    ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
 
 MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / 'media'
