@@ -169,7 +169,7 @@ GOOGLE_OAUTH_CLIENT_ID = os.getenv('GOOGLE_OAUTH_CLIENT_ID')
 
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp-relay.brevo.com'
-EMAIL_PORT = 587
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', 2525))
 EMAIL_USE_TLS = True
 EMAIL_HOST_USER = os.getenv('BREVO_SMTP_LOGIN')
 EMAIL_HOST_PASSWORD = os.getenv('BREVO_SMTP_PASSWORD')
