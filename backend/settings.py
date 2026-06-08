@@ -113,6 +113,13 @@ else:
     }
 
 # Password validation
+PASSWORD_HASHERS = [
+    'django.contrib.auth.hashers.Argon2PasswordHasher', 
+    'django.contrib.auth.hashers.PBKDF2PasswordHasher',
+    'django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher',
+    'django.contrib.auth.hashers.BCryptSHA256PasswordHasher',
+]
+
 AUTH_PASSWORD_VALIDATORS = [
     {
         'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
@@ -183,6 +190,9 @@ SILKY_MAX_RESPONSE_BODY_SIZE = 1024 # kb
 
 # --- Production Security Settings ---
 if not DEBUG:
+    SECURE_HSTS_SECONDS = 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
     # Honor the 'X-Forwarded-Proto' header for request.is_secure()
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     
@@ -197,8 +207,27 @@ if not DEBUG:
     SECURE_BROWSER_XSS_FILTER = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
 
+# --- Cache Configuration ---
+REDIS_URL = os.getenv('REDIS_URL')
+if REDIS_URL:
+    CACHES = {
+        "default": {
+            "BACKEND": "django_redis.cache.RedisCache",
+            "LOCATION": REDIS_URL,
+            "OPTIONS": {
+                "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            }
+        }
+    }
+
 # --- Celery Configuration ---
-CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL')
+# Use Upstash Redis as Celery broker by falling back to REDIS_URL
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', os.getenv('REDIS_URL'))
 # Si aucun broker n'est configuré (ex: pas de Redis sur Render), on exécute les tâches de manière synchrone
 CELERY_TASK_ALWAYS_EAGER = not bool(CELERY_BROKER_URL)
 CELERY_TASK_STORE_EAGER_RESULT = not bool(CELERY_BROKER_URL)
+
+
+
+
+CRON_SECRET_KEY = os.getenv('CRON_SECRET_KEY', 'ma-cle-secrete-pour-le-cron-123!')

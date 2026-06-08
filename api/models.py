@@ -1,5 +1,6 @@
 import uuid
 import sys
+from decimal import Decimal
 from io import BytesIO
 from PIL import Image
 
@@ -9,6 +10,7 @@ from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import InMemoryUploadedFile
 from django.db import models
 from django.contrib.auth.models import AbstractUser
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.core.validators import MinValueValidator, MaxValueValidator
@@ -46,7 +48,6 @@ class CustomUserManager(BaseUserManager):
 
 
 class BudgetChoices(models.TextChoices):
-
     UNDER_500 = 'Moins de 500', _('Moins de 500')
     BETWEEN_500_1000 = '500 - 1 000', _('500 - 1 000')
     BETWEEN_1000_2000 = '1 000 - 2 000', _('1 000 - 2 000')
@@ -57,6 +58,7 @@ class BudgetChoices(models.TextChoices):
     OVER_15000 = '15 000+', _('15 000+')
     PREFER_NOT_TO_SAY = 'Je préfère ne pas répondre', _('Je préfère ne pas répondre')
 
+
 class SocioProChoices(models.TextChoices):
     STUDENT = 'Étudiant', _('Étudiant')
     EMPLOYEE = 'Employé', _('Employé')
@@ -65,8 +67,6 @@ class SocioProChoices(models.TextChoices):
     LIBERAL = 'Profession libérale', _('Profession libérale')
     FREELANCE = 'Indépendant / Freelance', _('Indépendant / Freelance')
     RETIRED = 'Retraité', _('Retraité')
-
-
 
     WORKER = 'Ouvrier / Technicien', _('Ouvrier / Technicien')
     UNEMPLOYED = 'Sans emploi', _('Sans emploi')
@@ -114,7 +114,6 @@ class CustomUser(AbstractUser):
     # 3. PROFIL PERSONNEL ET SOCIO-PROFESSIONNEL
     # ==============================================================================
     birth_date = models.DateField(null=True, blank=True)
-    profession = models.CharField(max_length=150, null=True, blank=True)
     socio_professional_categories = models.JSONField(
         default=default_socio_pro,
         null=True,
@@ -125,11 +124,12 @@ class CustomUser(AbstractUser):
     # ==============================================================================
     # 4. PROFIL FINANCIER ET PARAMÈTRES DE COACHING IA
     # ==============================================================================
-    monthly_budget = models.CharField(
-        max_length=50,
-        choices=BudgetChoices.choices,
-        null=True,
-        blank=True
+
+    current_balance = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0.00,
+        help_text=_("Solde actuel en temps réel")
     )
     financial_goals = ArrayField(
         models.CharField(max_length=200),
@@ -186,6 +186,135 @@ class CustomUser(AbstractUser):
 
     def __str__(self):
         return self.email
+
+
+class IncomeStream(models.Model):
+    class FrequencyChoices(models.TextChoices):
+        ONE_TIME = 'ONE_TIME', _('Une seule fois')
+        DAILY = 'DAILY', _('Quotidien')
+        WEEKLY = 'WEEKLY', _('Hebdomadaire')
+        MONTHLY = 'MONTHLY', _('Mensuel')
+        YEARLY = 'YEARLY', _('Annuel')
+
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='income_streams')
+    name = models.CharField(max_length=150, help_text=_("Ex: Salaire, Freelance, Aide familiale"))
+    amount = models.DecimalField(max_digits=10, decimal_places=2,validators=[MinValueValidator(Decimal('0.01'))])
+    frequency = models.CharField(max_length=20, choices=FrequencyChoices.choices, default=FrequencyChoices.MONTHLY)
+    next_payment_date = models.DateField(null=True, blank=True, help_text=_("Date du prochain versement"))
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.name} - {self.amount} ({self.get_frequency_display()})"
+
+
+class BudgetEnvelope(models.Model):
+    """
+    Enveloppe budgétaire permettant d'isoler des fonds pour des événements précis
+    sans modifier le solde bancaire réel (current_balance).
+    """
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='budget_envelopes'
+    )
+    name = models.CharField(max_length=150)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    total_spent = models.DecimalField(max_digits=10, decimal_places=2, default=0.00,
+                                      help_text=_("Montant déjà dépensé dans cette enveloppe"))
+    start_date = models.DateField()
+    end_date = models.DateField()
+    category = models.CharField(max_length=50, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.name} ({self.amount}) - {self.user.email}"
+
+
+class TransactionHistory(models.Model):
+    class TransactionType(models.TextChoices):
+        INCOME = 'INCOME', _('Revenu')
+        EXPENSE = 'EXPENSE', _('Dépense')
+
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='transactions')
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    transaction_type = models.CharField(max_length=10, choices=TransactionType.choices)
+    description = models.CharField(max_length=255)
+    category = models.CharField(max_length=100, null=True, blank=True)
+    is_essential = models.BooleanField(default=False)
+    date = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-date']
+
+    def __str__(self):
+        return f"{self.transaction_type}: {self.amount} - {self.description}"
+
+
+class RecurringChargeBlueprint(models.Model):
+    """
+    Stocke le modèle de configuration d'une charge récurrente.
+    """
+    user = models.ForeignKey('CustomUser', on_delete=models.CASCADE, related_name='charge_blueprints')
+    name = models.CharField(max_length=150, help_text=_("Ex: Électricité, Internet, Loyer"))
+    is_fixed = models.BooleanField(default=True, help_text=_("Indique si le montant est fixe ou variable"))
+    exact_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    min_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    max_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+
+    due_day = models.IntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(31)],
+        help_text=_("Le jour du mois où la charge est exigible")
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            # Ensure data consistency at the database level
+            models.CheckConstraint(
+                condition=Q(is_fixed=True, exact_amount__isnull=False, min_amount__isnull=True, max_amount__isnull=True) |
+                      Q(is_fixed=False, exact_amount__isnull=True, min_amount__isnull=False, max_amount__isnull=False),
+                name='valid_amount_configuration'
+            )
+        ]
+
+    def __str__(self):
+        return f"Blueprint: {self.name} (Jour {self.due_day}) - {self.user.email}"
+
+
+class MonthlyChargeLedger(models.Model):
+    """
+    Suivi de l'exécution réelle pour chaque mois/cycle.
+    """
+    blueprint = models.ForeignKey(RecurringChargeBlueprint, on_delete=models.CASCADE, related_name='ledger_records')
+
+    # Historical copy (Kept: Good practice in case the blueprint name changes later)
+    name = models.CharField(max_length=150)
+
+    # Le montant provisionné (si fixe: exact_amount du blueprint, si variable: max_amount du blueprint)
+    provisioned_amount = models.DecimalField(max_digits=10, decimal_places=2,
+                                             help_text=_("Le montant maximal verrouillé dans le coffre"))
+
+    # Le montant réel de la facture une fois reçue/payée
+    actual_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+
+    due_date = models.DateField(help_text=_("Date précise d'échéance pour ce mois-ci"))
+    paid_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['due_date']
+        unique_together = ('blueprint', 'due_date')
+
+    @property
+    def is_paid(self):
+        """Computed property replacing the redundant boolean field."""
+        return self.paid_at is not None
+
+    def __str__(self):
+        status = "Payé" if self.is_paid else "Sécurisé"
+        return f"Ledger: {self.name} [{status}] pour le {self.due_date}"
 
 
 class ProductCategoryChoices(models.TextChoices):
@@ -253,6 +382,11 @@ class PurchaseIntention(models.Model):
             models.Index(fields=['user', '-created_at']),
         ]
 
+    wallet_type = models.CharField(
+        max_length=50,
+        default='main',
+        help_text=_("Indique la source de financement ('main' pour solde principal, 'env_X' pour une enveloppe)")
+    )
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True,
                              blank=True, related_name='purchase_intentions')
@@ -337,7 +471,8 @@ class PurchaseIntention(models.Model):
                     output.seek(0)
 
                     # Replace the original uploaded file with the compressed one
-                    name_without_ext = self.product_image.name.rsplit('.', 1)[0] if '.' in self.product_image.name else self.product_image.name
+                    name_without_ext = self.product_image.name.rsplit('.', 1)[
+                        0] if '.' in self.product_image.name else self.product_image.name
                     self.product_image = InMemoryUploadedFile(
                         output,
                         'ImageField',
@@ -490,7 +625,6 @@ class SavingsGoal(models.Model):
     )
     goal_name = models.CharField(max_length=150, help_text=_("Ex: Nouvel Ordinateur"))
     target_amount = models.DecimalField(max_digits=10, decimal_places=2)
-    saved_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

@@ -1,11 +1,14 @@
 # api/views.py
 import traceback
+from decimal import Decimal
 
+from dateutil.relativedelta import relativedelta
 from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.http import HttpResponse
-from rest_framework import status, generics
+from django.http import HttpResponse, JsonResponse
+from rest_framework import status, generics, viewsets, permissions
+from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.views import APIView
@@ -23,10 +26,12 @@ from .serializers import (
     UserRegistrationSerializer,
     ProductImageExtractionSerializer, PurchaseIntentionSerializer, ReflectionQuestionSerializer,
     FinalDecisionUpdateSerializer, AppFeedbackSerializer, AdminFeedbackSerializer, ErrorLogSerializer,
-    AdminUserListSerializer, OnboardingSerializer
+    AdminUserListSerializer, OnboardingSerializer, IncomeStreamSerializer, TransactionHistorySerializer,
+    MonthlyChargeLedgerSerializer, RecurringChargeBlueprintSerializer, BudgetEnvelopeSerializer,
 )
 from .models import CustomUser, ErrorLog, ReflectionQuestion, SavingsGoal, AppFeedback, \
-    ProductCategoryChoices, BudgetChoices, SocioProChoices
+    ProductCategoryChoices, BudgetChoices, SocioProChoices, IncomeStream, TransactionHistory, MonthlyChargeLedger, \
+    RecurringChargeBlueprint, BudgetEnvelope
 from .services import verify_google_token, send_password_reset_email, generate_ai_verdict, extract_product_data_via_ai, \
     generate_reflection_questions, generate_gemini_json_response, log_app_error, fetch_and_cache_daily_advice
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
@@ -82,7 +87,7 @@ class RegisterView(APIView):
             return Response({
                 'message': _('Inscription réussie.'),
                 'tokens': tokens,
-                'user': {'email': user.email, 'budget': user.monthly_budget}
+                'user': {'email': user.email, 'current_balance': float(user.current_balance)}
             }, status=status.HTTP_201_CREATED)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -95,20 +100,7 @@ class LoginView(APIView):
         email = request.data.get('email')
         password = request.data.get('password')
 
-        # 1. Vérification préventive du fournisseur (Auth Provider)
-        try:
-            user_check = CustomUser.objects.get(email=email)
-            if user_check.auth_provider == CustomUser.AuthProviders.GOOGLE:
-                return Response(
-                    {'error': _(
-                        "Cette adresse e-mail est liée à Google. Veuillez utiliser le bouton 'Se connecter avec Google'.")},
-                    status=status.HTTP_401_UNAUTHORIZED
-                )
-        except CustomUser.DoesNotExist:
-            # L'utilisateur n'existe pas du tout, on laisse la suite gérer
-            pass
-
-        # 2. Authentification classique
+        # 1. Authentification classique d'abord (Évite un hit BDD redondant sur succès)
         user = authenticate(email=email, password=password)
 
         if user is not None:
@@ -120,13 +112,23 @@ class LoginView(APIView):
                 import logging
                 logger = logging.getLogger(__name__)
                 logger.error(f"Failed to queue daily advice task: {e}")
-            
+
             tokens = get_user_tokens(user)
             return Response({
                 'message': _('Connexion réussie.'),
                 'tokens': tokens
             }, status=status.HTTP_200_OK)
 
+        # 2. Si l'authentification échoue, on vérifie seulement à ce moment-là
+        # si l'adresse e-mail correspond à un fournisseur Google Auth
+        if CustomUser.objects.filter(email=email, auth_provider=CustomUser.AuthProviders.GOOGLE).exists():
+            return Response(
+                {'error': _(
+                    "Cette adresse e-mail est liée à Google. Veuillez utiliser le bouton 'Se connecter avec Google'.")},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        # 3. Erreur classique d'authentification
         return Response({'error': _('E-mail ou mot de passe incorrect.')}, status=status.HTTP_401_UNAUTHORIZED)
 
 
@@ -162,8 +164,9 @@ class GoogleLoginView(APIView):
                 auth_provider=CustomUser.AuthProviders.GOOGLE,
             )
 
-        # Lancer la tâche en arrière-plan pour préparer le message du coach
-        threading.Thread(target=fetch_and_cache_daily_advice, args=(user.id,)).start()
+        # Lancer la tâche en arrière-plan pour préparer le message du coach via Upstash Redis (Celery)
+        from api.tasks import fetch_and_cache_daily_advice_task
+        fetch_and_cache_daily_advice_task.delay(user.id)
 
         tokens = get_user_tokens(user)
         return Response({
@@ -203,9 +206,11 @@ class PasswordResetRequestAPIView(APIView):
                 try:
                     send_password_reset_email(email, reset_url)
                 except Exception as e:
-                    log_app_error(e, context_message="Erreur d'envoi d'e-mail de réinitialisation", endpoint_url=request.path)
+                    log_app_error(e, context_message="Erreur d'envoi d'e-mail de réinitialisation",
+                                  endpoint_url=request.path)
                     return Response(
-                        {'error': _("Le service d'envoi d'e-mail est momentanément indisponible. Veuillez réessayer plus tard.")},
+                        {'error': _(
+                            "Le service d'envoi d'e-mail est momentanément indisponible. Veuillez réessayer plus tard.")},
                         status=status.HTTP_503_SERVICE_UNAVAILABLE
                     )
 
@@ -307,6 +312,143 @@ class UserProfileView(APIView):
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+
+class IncomeStreamViewSet(viewsets.ModelViewSet):
+    serializer_class = IncomeStreamSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return IncomeStream.objects.filter(user=self.request.user)
+
+    def perform_create(self, serializer):
+        income = serializer.save(user=self.request.user)
+        self._process_immediate_income(income)
+        cache.delete(f"dashboard_summary_{self.request.user.id}")
+
+    def perform_update(self, serializer):
+        income = serializer.save()
+        self._process_immediate_income(income)
+        cache.delete(f"dashboard_summary_{self.request.user.id}")
+
+    def perform_destroy(self, instance):
+        cache.delete(f"dashboard_summary_{self.request.user.id}")
+        super().perform_destroy(instance)
+
+    def _process_immediate_income(self, income):
+        """
+        Vérifie si la date du revenu est échue (aujourd'hui ou passé).
+        Si oui, met à jour le solde immédiatement pour un effet "temps réel" sur le front.
+        """
+        from api.services import process_income_payment
+        process_income_payment(income)
+
+
+class BudgetEnvelopeViewSet(viewsets.ModelViewSet):
+    """
+    Gestion des enveloppes budgétaires (CRUD complet).
+    """
+    serializer_class = BudgetEnvelopeSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        # Ne retourner que les enveloppes de l'utilisateur connecté, triées par date de début
+        return BudgetEnvelope.objects.filter(user=self.request.user).order_by('start_date')
+
+    def perform_create(self, serializer):
+        with transaction.atomic():
+            envelope = serializer.save(user=self.request.user)
+
+            # Sécurité : au cas où l'utilisateur déclare une dépense dès la création
+            if envelope.total_spent > 0:
+                user = self.request.user
+                user.current_balance -= envelope.total_spent
+                user.save(update_fields=['current_balance'])
+
+                TransactionHistory.objects.create(
+                    user=user,
+                    amount=-envelope.total_spent,
+                    transaction_type=TransactionHistory.TransactionType.EXPENSE,
+                    description=f"Dépense déclarée (Env. {envelope.name})",
+                    category=envelope.category or "Enveloppe"
+                )
+
+    def perform_update(self, serializer):
+        with transaction.atomic():
+            # 1. Récupérer l'état de l'enveloppe AVANT la mise à jour
+            old_envelope = self.get_object()
+            old_spent = old_envelope.total_spent
+
+            # 2. Sauvegarder et récupérer le NOUVEL état
+            new_envelope = serializer.save()
+            new_spent = new_envelope.total_spent
+
+            # 3. Calculer la différence (identique au frontend)
+            diff = new_spent - old_spent
+
+            # 4. Si la dépense a changé, on ajuste le solde principal en base de données
+            if diff != 0:
+                user = self.request.user
+                user.current_balance -= diff
+                user.save(update_fields=['current_balance'])
+
+                # 5. On crée une trace transparente dans l'historique des transactions
+                is_expense = diff > 0
+                TransactionHistory.objects.create(
+                    user=user,
+                    amount=-diff,
+                    # Si diff > 0 (dépense), le montant sera négatif. Si diff < 0 (correction/remboursement), le montant sera positif.
+                    transaction_type=TransactionHistory.TransactionType.EXPENSE if is_expense else TransactionHistory.TransactionType.INCOME,
+                    description=f"{'Dépense' if is_expense else 'Correction'} (Env. {new_envelope.name})",
+                    category=new_envelope.category or "Enveloppe"
+                )
+
+
+class TransactionHistoryViewSet(viewsets.ModelViewSet):
+    serializer_class = TransactionHistorySerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return TransactionHistory.objects.filter(user=self.request.user)
+
+    def perform_create(self, serializer):
+        # Utilisation de transaction.atomic pour garantir la cohérence des données financières
+        with transaction.atomic():
+            # Verrouille spécifiquement la ligne de cet utilisateur dans la base de données
+            # jusqu'à la fin de la transaction pour éviter les conditions de concurrence (race conditions).
+            user = CustomUser.objects.select_for_update().get(pk=self.request.user.pk)
+
+            amount = serializer.validated_data.get('amount', Decimal('0.00'))
+            t_type = serializer.validated_data.get('transaction_type')
+
+            # Traitement sécurisé du montant :
+            # Peu importe si le frontend envoie 45 ou -45, on force les dépenses en négatif
+            # et les revenus en positif pour le stockage historique.
+            if t_type == TransactionHistory.TransactionType.EXPENSE:
+                deduction = abs(amount)
+                user.current_balance -= deduction
+                final_amount = -deduction
+            else:
+                addition = abs(amount)
+                user.current_balance += addition
+                final_amount = addition
+
+            # Sauvegarde du solde utilisateur
+            user.save(update_fields=['current_balance'])
+
+            # Sauvegarde de la transaction en injectant l'utilisateur et le montant formaté
+            serializer.save(user=user, amount=final_amount)
+            
+        cache.delete(f"dashboard_summary_{self.request.user.id}")
+
+    def perform_update(self, serializer):
+        super().perform_update(serializer)
+        cache.delete(f"dashboard_summary_{self.request.user.id}")
+
+    def perform_destroy(self, instance):
+        cache.delete(f"dashboard_summary_{self.request.user.id}")
+        super().perform_destroy(instance)
+
+
 class RequestOTPView(APIView):
     permission_classes = [AllowAny]
 
@@ -330,16 +472,19 @@ class RequestOTPView(APIView):
             send_otp_email(email, otp_code)
         except Exception as e:
             log_app_error(e, context_message="Erreur d'envoi d'e-mail OTP", endpoint_url=request.path)
-            return Response({"error": "Le service d'envoi d'e-mail est momentanément indisponible. Veuillez réessayer plus tard."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            return Response(
+                {"error": "Le service d'envoi d'e-mail est momentanément indisponible. Veuillez réessayer plus tard."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
         return Response({"message": "Code OTP envoyé avec succès."}, status=status.HTTP_200_OK)
+
+
 class OnboardingChoicesView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         return Response({
             "socio_pro": [{"value": c.value, "label": c.label} for c in SocioProChoices],
-            "budget": [{"value": c.value, "label": c.label} for c in BudgetChoices]
         }, status=status.HTTP_200_OK)
 
 
@@ -358,6 +503,7 @@ class SubmitOnboardingView(APIView):
             return Response({"message": "Onboarding terminé avec succès."}, status=status.HTTP_200_OK)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
 class ClearHistoryView(APIView):
     """
@@ -426,18 +572,11 @@ class PurchaseIntentionCreateView(APIView):
                 product_price = serializer.validated_data.get('product_price', 0)
                 preferred_currency = getattr(request.user, 'preferred_currency', 'TND')
 
-                prompt = f"""
-                Vérifie la cohérence de cette intention d'achat :
-                Nom : "{product_name}"
-                Catégorie : "{product_category}"
-                Prix : {product_price} {preferred_currency}
-
-                Est-ce que ces trois éléments sont logiquement cohérents ensemble dans la réalité ? 
-                Réponds STRICTEMENT par un JSON : {{"is_coherent": true/false, "reason": "explication brève"}}
-                """
                 try:
-
-                    result = generate_gemini_json_response(prompt)
+                    from api.services import check_purchase_coherence
+                    result = check_purchase_coherence(
+                        product_name, product_category, product_price, preferred_currency
+                    )
 
                     # On bloque si l'IA trouve ça incohérent
                     if not result.get('is_coherent', True):
@@ -458,6 +597,7 @@ class PurchaseIntentionCreateView(APIView):
 
             # Sauvegarde finale
             purchase_intention = serializer.save(user=request.user)
+            cache.delete(f"dashboard_summary_{request.user.id}")
 
             return Response({
                 "message": _("Les informations ont été validées. L'IA prépare ses questions."),
@@ -549,36 +689,121 @@ class UserFinalDecisionView(APIView):
     permission_classes = [IsAuthenticated]
 
     def patch(self, request, intention_id):
-        try:
-            intention = get_user_intention_or_404(intention_id, request.user)
+        # 1. Open the transaction boundary at the highest level
+        with transaction.atomic():
+            try:
+                # 2. Idempotency Guard: Lock the intention row immediately
+                intention = PurchaseIntention.objects.select_for_update().get(
+                    id=intention_id,
+                    user=request.user
+                )
+            except PurchaseIntention.DoesNotExist:
+                raise NotFound(detail=_("Intention d'achat introuvable."))
+
+            # State check *after* the lock guarantees accurate status reading
+            was_already_resolved = intention.user_final_decision in [
+                PurchaseIntention.DecisionChoices.BUY,
+                PurchaseIntention.DecisionChoices.ABANDON
+            ]
+
             serializer = FinalDecisionUpdateSerializer(intention, data=request.data, partial=True)
 
             if serializer.is_valid():
+                new_decision = serializer.validated_data.get('user_final_decision')
+
+                # 3. Only execute withdrawal if BUY was explicitly chosen AND not previously resolved
+                if new_decision == PurchaseIntention.DecisionChoices.BUY and not was_already_resolved:
+                    user = request.user
+                    price = intention.product_price
+                    wallet = intention.wallet_type
+
+                    # --- BUDGET ENVELOPE DEDUCTION ---
+                    if wallet and wallet.startswith('env_'):
+                        env_id = wallet.split('_')[1]
+                        try:
+                            # Lock the specific envelope
+                            envelope = BudgetEnvelope.objects.select_for_update().get(id=env_id, user=user)
+
+                            # Overdraft Protection
+                            if envelope.amount < price:
+                                return Response(
+                                    {"error": _("Fonds insuffisants dans cette enveloppe budgétaire.")},
+                                    status=status.HTTP_400_BAD_REQUEST
+                                )
+
+                            envelope.amount -= price
+                            envelope.save(update_fields=['amount'])
+                            desc = f"Achat (Env. {envelope.name}) : {intention.product_name}"
+
+                        except BudgetEnvelope.DoesNotExist:
+                            # Fallback: If envelope was deleted, default to locking main wallet
+                            user_locked = CustomUser.objects.select_for_update().get(pk=user.pk)
+                            if user_locked.current_balance < price:
+                                return Response(
+                                    {"error": _("Enveloppe introuvable et solde principal insuffisant.")},
+                                    status=status.HTTP_400_BAD_REQUEST
+                                )
+                            user_locked.current_balance -= price
+                            user_locked.save(update_fields=['current_balance'])
+                            desc = f"Achat (Secours) : {intention.product_name}"
+
+                    # --- MAIN WALLET DEDUCTION ---
+                    else:
+                        # Lock the main user profile
+                        user_locked = CustomUser.objects.select_for_update().get(pk=user.pk)
+
+                        # Dynamically calculate available balance (Current Balance - Reserved Envelopes)
+                        today = timezone.now().date()
+                        active_envelopes = BudgetEnvelope.objects.filter(
+                            user=user_locked,
+                            start_date__lte=today,
+                            end_date__gte=today
+                        )
+                        reserved_amount = active_envelopes.aggregate(Sum('amount'))['amount__sum'] or Decimal('0.00')
+                        available_balance = user_locked.current_balance - reserved_amount
+
+                        # Overdraft Protection
+                        if available_balance < price:
+                            return Response(
+                                {"error": _("Le solde disponible du portefeuille principal est insuffisant.")},
+                                status=status.HTTP_400_BAD_REQUEST
+                            )
+
+                        user_locked.current_balance -= price
+                        user_locked.save(update_fields=['current_balance'])
+                        desc = f"Achat : {intention.product_name}"
+
+                    # 4. Safe Ledger Insertion
+                    TransactionHistory.objects.create(
+                        user=user,
+                        amount=-abs(price),  # Enforce negative flow for expenses
+                        transaction_type=TransactionHistory.TransactionType.EXPENSE,
+                        description=desc,
+                        category=intention.product_category
+                    )
+
+                # 5. Finalize the intention state (commits the idempotency check)
                 updated_intention = serializer.save()
+                update_fields = ['cooldown_expires_at', 'user_final_decision']
 
-                update_fields = ['cooldown_expires_at'] # Liste des champs à MAJ
-
-                # Gestion du chronomètre si la décision est "CALM" (Attendre)
                 if updated_intention.user_final_decision == PurchaseIntention.DecisionChoices.CALM_DOWN:
                     hours = request.user.cooldown_preference or 24
                     updated_intention.cooldown_expires_at = timezone.now() + timedelta(hours=hours)
-                    # NOUVEAU : On enregistre le fait qu'il a cliqué sur Attendre au moins une fois
                     if not updated_intention.wait_chosen_at:
                         updated_intention.wait_chosen_at = timezone.now()
                         update_fields.append('wait_chosen_at')
                 else:
-                    # On nettoie si l'utilisateur achète ou abandonne
                     updated_intention.cooldown_expires_at = None
 
                 updated_intention.save(update_fields=update_fields)
+                cache.delete(f"dashboard_summary_{request.user.id}")
 
                 return Response({
                     "message": _("Votre décision finale a été enregistrée. Merci pour votre honnêteté !"),
                     "data": serializer.data
                 }, status=status.HTTP_200_OK)
+
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        except NotFound as e:
-            return Response({"error": str(e.detail)}, status=status.HTTP_404_NOT_FOUND)
 
 
 class DashboardSummaryView(APIView):
@@ -593,7 +818,7 @@ class DashboardSummaryView(APIView):
         now = timezone.now()
 
         # Remise à UNKOWN des délais expirés
-        PurchaseIntention.objects.filter(
+        updated_count = PurchaseIntention.objects.filter(
             user=user,
             user_final_decision=PurchaseIntention.DecisionChoices.CALM_DOWN,
             cooldown_expires_at__lte=now
@@ -601,6 +826,14 @@ class DashboardSummaryView(APIView):
             user_final_decision=PurchaseIntention.DecisionChoices.UNKOWN,
             cooldown_expires_at=None
         )
+
+        cache_key = f"dashboard_summary_{user.id}"
+        if updated_count > 0:
+            cache.delete(cache_key)
+
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            return Response(cached_data, status=status.HTTP_200_OK)
 
         # BASE DE REQUÊTE SÉCURISÉE (Soft Delete Filter)
         # On filtre pour ne garder que les intentions créées APRÈS l'effacement de l'historique
@@ -613,8 +846,10 @@ class DashboardSummaryView(APIView):
             created_at__year=now.year,
             created_at__month=now.month
         ).aggregate(
-            monthly_savings=Sum('product_price', filter=Q(user_final_decision=PurchaseIntention.DecisionChoices.ABANDON)),
-            total_resolved=Count('id', filter=~Q(user_final_decision__isnull=True) & ~Q(user_final_decision=PurchaseIntention.DecisionChoices.UNKOWN)),
+            monthly_savings=Sum('product_price',
+                                filter=Q(user_final_decision=PurchaseIntention.DecisionChoices.ABANDON)),
+            total_resolved=Count('id', filter=~Q(user_final_decision__isnull=True) & ~Q(
+                user_final_decision=PurchaseIntention.DecisionChoices.UNKOWN)),
             abandoned_intentions=Count('id', filter=Q(user_final_decision=PurchaseIntention.DecisionChoices.ABANDON))
         )
 
@@ -622,7 +857,8 @@ class DashboardSummaryView(APIView):
         total_resolved = stats['total_resolved'] or 0
         abandoned_intentions = stats['abandoned_intentions'] or 0
         mastery_ratio = int((abandoned_intentions / total_resolved) * 100) if total_resolved > 0 else 0
-
+        unpaid_ledgers = MonthlyChargeLedger.objects.filter(blueprint__user=user, paid_at__isnull=True).order_by('due_date')
+        fixed_charges_serializer = MonthlyChargeLedgerSerializer(unpaid_ledgers, many=True)
         # 3. Objectif d'épargne actif
         active_goal = SavingsGoal.objects.filter(user=user, is_active=True).first()
         goal_data = {
@@ -641,7 +877,7 @@ class DashboardSummaryView(APIView):
             Q(user_final_decision__isnull=True) | Q(user_final_decision=PurchaseIntention.DecisionChoices.UNKOWN)
         ).prefetch_related('questions').order_by('-created_at')
         pending_serializer = PurchaseIntentionSerializer(pending_intentions, many=True)
-        
+
         # 6. Message du Coach IA (Cache + Background Task)
         import datetime
         today = datetime.date.today().isoformat()
@@ -651,9 +887,10 @@ class DashboardSummaryView(APIView):
         if not ai_message:
             # Fallback synchrone immédiat si le cache n'est pas encore prêt
             currency = getattr(user, 'preferred_currency', 'TND')
-            ai_message = f"Vous avez fait de superbes économies ({monthly_savings} {currency}) ce mois-ci !" if float(monthly_savings) > 0 else "Prêt à sauver votre budget aujourd'hui ?"
+            ai_message = f"Vous avez fait de superbes économies ({monthly_savings} {currency}) ce mois-ci !" if float(
+                monthly_savings) > 0 else "Prêt à sauver votre budget aujourd'hui ?"
 
-        return Response({
+        response_data = {
             "user_name": user.first_name or "Utilisateur",
             "ai_coach_message": ai_message,
             "mastery_ratio": mastery_ratio,
@@ -663,7 +900,90 @@ class DashboardSummaryView(APIView):
                 "current_month": now.strftime('%B'),
             },
             "recent_history": history_serializer.data,
-            "pending_intentions": pending_serializer.data
+            "pending_intentions": pending_serializer.data,
+            "fixed_charges": fixed_charges_serializer.data
+        }
+
+        # Mise en cache pour 15 minutes
+        cache.set(f"dashboard_summary_{user.id}", response_data, timeout=900)
+
+        return Response(response_data, status=status.HTTP_200_OK)
+
+
+class FixedChargeViewSet(viewsets.ModelViewSet):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = RecurringChargeBlueprintSerializer
+
+    def get_queryset(self):
+        return RecurringChargeBlueprint.objects.filter(user=self.request.user, is_active=True)
+
+    @transaction.atomic
+    def perform_create(self, serializer):
+        # Récupération de la date passée par le calendrier front-end
+        due_date = serializer.validated_data.pop('due_date', timezone.now().date())
+        due_day = due_date.day
+
+        # 1. Enregistrement de la configuration de base (Blueprint)
+        blueprint = serializer.save(user=self.request.user, due_day=due_day)
+
+        # 2. Création de la ligne d'exécution avec calcul dynamique du montant à bloquer
+        provisioned_amt = blueprint.exact_amount if blueprint.is_fixed else blueprint.max_amount
+
+        MonthlyChargeLedger.objects.create(
+            blueprint=blueprint,
+            name=blueprint.name,
+            provisioned_amount=provisioned_amt,
+            due_date=due_date
+        )
+
+        # 3. RÈGLE DE VERROUILLAGE DYNAMIQUE : Retrait du solde réel disponible
+        user = self.request.user
+        user.current_balance -= provisioned_amt
+        user.save(update_fields=['current_balance'])
+
+    @action(detail=True, methods=['post'], url_path='settle')
+    @transaction.atomic
+    def settle_charge(self, request, pk=None):
+        """
+        Gère le flux 'Mark as Paid' de l'interface Secured Vault avec ajustement mathématique du solde.
+        """
+        try:
+            # Correction des filtres de requêtes SQL (on passe par le blueprint et paid_at)
+            ledger_entry = MonthlyChargeLedger.objects.get(id=pk, blueprint__user=request.user, paid_at__isnull=True)
+        except MonthlyChargeLedger.DoesNotExist:
+            return Response({"error": "Ligne de charge introuvable ou déjà réglée."}, status=status.HTTP_404_NOT_FOUND)
+
+        actual_amount = request.data.get('actual_amount')
+        if not actual_amount or float(actual_amount) <= 0:
+            return Response({"error": "Le montant réel payé doit être strictement supérieur à 0."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        actual_amount = Decimal(str(actual_amount))
+        max_locked = ledger_entry.provisioned_amount
+        user = request.user
+
+        # --- MOTEUR MATHÉMATIQUE DE RÉSOLUTION ---
+        difference = max_locked - actual_amount
+        user.current_balance += difference
+        user.save(update_fields=['current_balance'])
+
+        # Marquage de la ligne d'exécution comme payée (champs réels du modèle)
+        ledger_entry.actual_amount = actual_amount
+        ledger_entry.paid_at = timezone.now()
+        ledger_entry.save(update_fields=['actual_amount', 'paid_at'])
+
+        # Historisation conforme (Négatif pour les dépenses)
+        TransactionHistory.objects.create(
+            user=user,
+            amount=-abs(actual_amount),
+            transaction_type=TransactionHistory.TransactionType.EXPENSE,
+            description=f"Prélèvement réglé : {ledger_entry.name} (Initialement estimé à {max_locked})"
+        )
+
+        return Response({
+            "message": "Paiement validé avec succès.",
+            "current_balance": float(user.current_balance),
+            "adjustment": float(difference)
         }, status=status.HTTP_200_OK)
 
 
@@ -1215,9 +1535,38 @@ class AdminCategoryStatsView(APIView):
         })
 
 
-
-
-#------------
+# ------------
 def health_check(request):
     "renvoie juste un mot l'objectif est de garder notre serveur render actif"
-    return HttpResponse("ok",content_type="text/plain")
+    return HttpResponse("ok", content_type="text/plain")
+
+
+class ProcessIncomesCronView(APIView):
+    """
+    Endpoint sécurisé par une clé secrète, appelé tous les jours à minuit
+    par un service externe (ex: cron-job.org) pour traiter les revenus récurrents.
+    """
+    permission_classes = [AllowAny]  # Sécurité gérée manuellement ci-dessous
+
+    def get(self, request):
+        # 1. Vérification de la clé secrète passée dans l'URL (?secret=...)
+        provided_secret = request.GET.get('secret')
+        expected_secret = getattr(settings, 'CRON_SECRET_KEY', None)
+
+        if not provided_secret or provided_secret != expected_secret:
+            return JsonResponse({"error": "Non autorisé. Mauvaise clé secrète."}, status=401)
+
+        # 2. Logique de traitement des revenus (similaire à la tâche Celery)
+        today = timezone.now().date()
+        due_incomes = IncomeStream.objects.filter(is_active=True, next_payment_date__lte=today)
+        processed_count = 0
+
+        from api.services import process_income_payment
+        for income in due_incomes:
+            process_income_payment(income)
+            processed_count += 1
+
+        return JsonResponse({
+            "status": "success",
+            "message": f"{processed_count} revenus ont été traités avec succès."
+        }, status=200)

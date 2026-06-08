@@ -1,5 +1,7 @@
 # api/urls.py
 from django.urls import path, include
+from rest_framework.routers import DefaultRouter  # 1. Import DefaultRouter
+
 from .views import (
     RegisterView,
     LoginView,
@@ -11,11 +13,23 @@ from .views import (
     UserFinalDecisionView, DashboardSummaryView, AppFeedbackCreateView, PurchaseHistoryView, AdminFeedbackListView,
     PurchaseIntentionDetailView, StatsDashboardAPIView, AdminGlobalStatsView, AdminSystemHealthView,
     AdminUserManagementView, CategoryListView, ClearHistoryView, AdminCategoryStatsView, OnboardingChoicesView,
-    SubmitOnboardingView, RequestOTPView, health_check
+    SubmitOnboardingView, RequestOTPView, health_check,
+
+    # 2. Import the new ViewSets
+    IncomeStreamViewSet,
+    TransactionHistoryViewSet, ProcessIncomesCronView, FixedChargeViewSet, BudgetEnvelopeViewSet
 )
 from rest_framework_simplejwt.views import TokenRefreshView
 
+router = DefaultRouter()
+router.register(r'incomes', IncomeStreamViewSet, basename='income')
+router.register(r'transactions', TransactionHistoryViewSet, basename='transaction')
+router.register(r'fixed-charges', FixedChargeViewSet, basename='fixed-charge')
+router.register(r'envelopes', BudgetEnvelopeViewSet, basename='envelope')
 urlpatterns = [
+    # 4. Include the router URLs
+    path('', include(router.urls)),
+
     path('auth/register/', RegisterView.as_view(), name='register'),
     path('onboarding/choices/', OnboardingChoicesView.as_view(), name='onboarding-choices'),
     path('onboarding/submit/', SubmitOnboardingView.as_view(), name='onboarding-submit'),
@@ -26,6 +40,7 @@ urlpatterns = [
     path('auth/password-reset/', PasswordResetRequestAPIView.as_view(), name='password-reset-request'),
     path('auth/password-reset-confirm/<uidb64>/<token>/', PasswordResetConfirmAPIView.as_view(),
          name='password-reset-confirm'),
+    path('cron/process-incomes/', ProcessIncomesCronView.as_view(), name='cron-process-incomes'),
     path('users/me/', UserProfileView.as_view(), name='user-profile'),
     path('purchase-intentions/extract/', ExtractProductInfoView.as_view(), name='extract-product-info'),
     path('purchase-intentions/', PurchaseIntentionCreateView.as_view(), name='create-purchase-intention'),
@@ -38,19 +53,6 @@ urlpatterns = [
     path('dashboard/summary/', DashboardSummaryView.as_view(), name='dashboard-summary'),
     path('app-feedback/', AppFeedbackCreateView.as_view(), name='app-feedback'),
 
-    path('purchase-intentions/<uuid:intention_id>/generate-questions/',
-         GenerateQuestionsView.as_view(),
-         name='generate-questions'),
-
-    # 2. Envoi des réponses et génération du verdict par l'IA
-    path('purchase-intentions/<uuid:intention_id>/verdict/',
-         GenerateVerdictView.as_view(),
-         name='generate-verdict'),
-
-    # 3. Enregistrement de la décision finale de l'utilisateur (Acheter/Attendre/Abandonner)
-    path('purchase-intentions/<uuid:intention_id>/final-decision/',
-         UserFinalDecisionView.as_view(),
-         name='user-final-decision'),
     path('purchase-intentions/history/', PurchaseHistoryView.as_view(), name='purchase-history'),
     path('admin-api/feedbacks/', AdminFeedbackListView.as_view(), name='admin-feedbacks'),
     path('purchase-intentions/<uuid:intention_id>/', PurchaseIntentionDetailView.as_view(),
@@ -64,6 +66,5 @@ urlpatterns = [
     path('admin-api/users/<int:user_id>/', AdminUserManagementView.as_view(), name='admin-user-update'),
     path('users/me/clear-history/', ClearHistoryView.as_view(), name='clear-history'),
     path('admin-api/stats/categories/', AdminCategoryStatsView.as_view(), name='admin-stats-categories'),
-    path('healthz/',health_check,name='health_check'),
-
+    path('healthz/', health_check, name='health_check'),
 ]
