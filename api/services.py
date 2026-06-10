@@ -72,21 +72,33 @@ def verify_google_token(token: str) -> dict:
 
 
 def send_password_reset_email(email: str, reset_url: str):
-    """Sends the reset email via Brevo (configured as SMTP in settings.py)."""
+    """Sends the reset email via Brevo synchronously (immediate delivery)."""
     subject = "Vrai Besoin - Réinitialisation de votre mot de passe"
     message = f"Bonjour,\n\nVous avez demandé la réinitialisation de votre mot de passe. Cliquez sur le lien suivant : {reset_url}\n\nSi vous n'êtes pas à l'origine de cette demande, ignorez cet e-mail."
 
-    from api.tasks import send_email_task
-    send_email_task.delay(subject, message, [email])
+    from django.core.mail import send_mail
+    send_mail(
+        subject=subject,
+        message=message,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[email],
+        fail_silently=False,
+    )
 
 
 def send_otp_email(email: str, otp_code: str):
-    """Envoie l'e-mail de vérification contenant le code OTP."""
+    """Envoie l'e-mail de vérification contenant le code OTP de façon synchrone (immédiate)."""
     subject = "Vrai Besoin - Votre code de vérification"
     message = f"Bonjour,\n\nVotre code de vérification à 6 chiffres est : {otp_code}\n\nCe code est valide pendant 10 minutes.\n\nL'équipe Vrai Besoin"
 
-    from api.tasks import send_email_task
-    send_email_task.delay(subject, message, [email])
+    from django.core.mail import send_mail
+    send_mail(
+        subject=subject,
+        message=message,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[email],
+        fail_silently=False,
+    )
 
 
 def get_user_active_charges_json(user) -> str:

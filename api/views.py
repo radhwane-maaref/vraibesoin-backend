@@ -121,7 +121,7 @@ class LoginView(APIView):
 
         # 2. Si l'authentification échoue, on vérifie seulement à ce moment-là
         # si l'adresse e-mail correspond à un fournisseur Google Auth
-        if CustomUser.objects.filter(email=email, auth_provider=CustomUser.AuthProviders.GOOGLE).exists():
+        if CustomUser.objects.filter(email=email, auth_provider__iexact=CustomUser.AuthProviders.GOOGLE).exists():
             return Response(
                 {'error': _(
                     "Cette adresse e-mail est liée à Google. Veuillez utiliser le bouton 'Se connecter avec Google'.")},
@@ -149,7 +149,7 @@ class GoogleLoginView(APIView):
         # 1. Vérification du compte existant
         try:
             user = CustomUser.objects.get(email=email)
-            if user.auth_provider != CustomUser.AuthProviders.GOOGLE:
+            if user.auth_provider.upper() != CustomUser.AuthProviders.GOOGLE:
                 # Le message précis qui sera affiché sur le front-end
                 return Response(
                     {'error': _(
@@ -187,7 +187,7 @@ class PasswordResetRequestAPIView(APIView):
                 user = CustomUser.objects.get(email=email)
 
                 # Bloquer silencieusement si l'utilisateur s'est inscrit via Google
-                if user.auth_provider == 'GOOGLE':
+                if user.auth_provider.upper() == 'GOOGLE':
                     return Response(
                         {'error': _("Ce compte est lié à Google. Veuillez utiliser la connexion Google.")},
                         status=status.HTTP_400_BAD_REQUEST
@@ -278,7 +278,7 @@ class UserProfileView(APIView):
 
         if new_password:
             # Sécurité : Bloquer les comptes Google
-            if user.auth_provider == 'GOOGLE':
+            if user.auth_provider.upper() == 'GOOGLE':
                 return Response(
                     {"error": _("Impossible de modifier le mot de passe d'un compte géré par Google.")},
                     status=status.HTTP_400_BAD_REQUEST
@@ -1426,7 +1426,7 @@ class AdminUserManagementView(APIView):
                 return Response({"status": "Utilisateur restauré avec succès"})
 
             elif action == 'manual_password_change':
-                if user.auth_provider == 'GOOGLE':
+                if user.auth_provider.upper() == 'GOOGLE':
                     return Response(
                         {"error": "Impossible de modifier le mot de passe d'un compte géré par Google."},
                         status=status.HTTP_400_BAD_REQUEST
@@ -1444,7 +1444,7 @@ class AdminUserManagementView(APIView):
                 return Response({"status": "Mot de passe modifié avec succès."})
 
             elif action == 'reset_password':
-                if user.auth_provider == 'GOOGLE':
+                if user.auth_provider.upper() == 'GOOGLE':
                     return Response({"error": "Cannot reset password for Google Auth users"},
                                     status=status.HTTP_400_BAD_REQUEST)
 
