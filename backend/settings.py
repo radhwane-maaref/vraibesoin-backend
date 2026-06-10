@@ -1,4 +1,6 @@
 import os
+from urllib.parse import urlparse, parse_qsl
+
 import dj_database_url
 from datetime import timedelta
 from pathlib import Path
@@ -89,15 +91,19 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 
 # Database
 # Use DATABASE_URL if available (for production/Render/Heroku)
-DATABASE_URL = os.getenv('DATABASE_URL')
+DATABASE_URL = urlparse(os.getenv("DATABASE_URL"))
 
 if DATABASE_URL:
     DATABASES = {
-        'default': dj_database_url.config(
-            default=DATABASE_URL,
-            conn_max_age=600,
-            conn_health_checks=True,
-        )
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': DATABASE_URL.path.replace('/', ''),
+            'USER': DATABASE_URL.username,
+            'PASSWORD': DATABASE_URL.password,
+            'HOST': DATABASE_URL.hostname,
+            'PORT': 5432,
+            'OPTIONS': dict(parse_qsl(DATABASE_URL.query)),
+        }
     }
 else:
     # Fallback to local dev settings
