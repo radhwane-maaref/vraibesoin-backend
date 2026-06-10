@@ -202,6 +202,7 @@ class IncomeStream(models.Model):
     frequency = models.CharField(max_length=20, choices=FrequencyChoices.choices, default=FrequencyChoices.MONTHLY)
     next_payment_date = models.DateField(null=True, blank=True, help_text=_("Date du prochain versement"))
     is_active = models.BooleanField(default=True)
+    is_deleted = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

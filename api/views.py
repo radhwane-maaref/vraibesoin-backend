@@ -318,7 +318,7 @@ class IncomeStreamViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return IncomeStream.objects.filter(user=self.request.user)
+        return IncomeStream.objects.filter(user=self.request.user, is_deleted=False)
 
     def perform_create(self, serializer):
         income = serializer.save(user=self.request.user)
@@ -326,13 +326,45 @@ class IncomeStreamViewSet(viewsets.ModelViewSet):
         cache.delete(f"dashboard_summary_{self.request.user.id}")
 
     def perform_update(self, serializer):
-        income = serializer.save()
-        self._process_immediate_income(income)
+        with transaction.atomic():
+            old_income = self.get_object()
+            old_amount = old_income.amount
+            
+            new_income = serializer.save()
+            diff = new_income.amount - old_amount
+            
+            if diff != 0:
+                user = self.request.user
+                user.current_balance += diff
+                user.save(update_fields=['current_balance'])
+                
+                is_expense = diff < 0
+                TransactionHistory.objects.create(
+                    user=user,
+                    amount=diff,
+                    transaction_type=TransactionHistory.TransactionType.EXPENSE if is_expense else TransactionHistory.TransactionType.INCOME,
+                    description=f"Modification du revenu : {new_income.name}"
+                )
+                
+            self._process_immediate_income(new_income)
         cache.delete(f"dashboard_summary_{self.request.user.id}")
 
     def perform_destroy(self, instance):
+        with transaction.atomic():
+            instance.is_deleted = True
+            instance.save(update_fields=['is_deleted'])
+            
+            user = self.request.user
+            user.current_balance -= instance.amount
+            user.save(update_fields=['current_balance'])
+            
+            TransactionHistory.objects.create(
+                user=user,
+                amount=-instance.amount,
+                transaction_type=TransactionHistory.TransactionType.EXPENSE,
+                description=f"Suppression du revenu : {instance.name}"
+            )
         cache.delete(f"dashboard_summary_{self.request.user.id}")
-        super().perform_destroy(instance)
 
     def _process_immediate_income(self, income):
         """
