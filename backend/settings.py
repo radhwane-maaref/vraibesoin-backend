@@ -90,33 +90,15 @@ TEMPLATES = [
 WSGI_APPLICATION = 'backend.wsgi.application'
 
 # Database
-# Use DATABASE_URL if available (for production/Render/Heroku)
-DATABASE_URL = urlparse(os.getenv("DATABASE_URL"))
 
-if DATABASE_URL:
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.postgresql',
-            'NAME': DATABASE_URL.path.replace('/', ''),
-            'USER': DATABASE_URL.username,
-            'PASSWORD': DATABASE_URL.password,
-            'HOST': DATABASE_URL.hostname,
-            'PORT': 5432,
-            'OPTIONS': dict(parse_qsl(DATABASE_URL.query)),
-        }
-    }
-else:
-    # Fallback to local dev settings
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.postgresql',
-            'NAME': os.getenv('DB_NAME', 'postgres'),
-            'USER': os.getenv('DB_USER', 'postgres'),
-            'PASSWORD': os.getenv('DB_PASSWORD', 'postgres'),
-            'HOST': os.getenv('DB_HOST', 'localhost'),
-            'PORT': os.getenv('DB_PORT', '5432'),
-        }
-    }
+# dj_database_url automatically parses the DATABASE_URL provided by Render/Neon.
+# If DATABASE_URL is not found, it gracefully falls back to local PostgreSQL variables.
+DATABASES = {
+    'default': dj_database_url.config(
+        default=f"postgres://{os.getenv('DB_USER', 'postgres')}:{os.getenv('DB_PASSWORD', 'postgres')}@{os.getenv('DB_HOST', 'localhost')}:{os.getenv('DB_PORT', '5432')}/{os.getenv('DB_NAME', 'postgres')}",
+        conn_max_age=600
+    )
+}
 
 # Password validation
 PASSWORD_HASHERS = [
@@ -152,13 +134,14 @@ STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 STORAGES = {
     "staticfiles": {
-        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+        "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
     },
 }
 
 # CORS Configuration
 CORS_ALLOWED_ORIGINS = get_list_env('CORS_ALLOWED_ORIGINS', 'http://localhost:5173')
-
+CORS_ALLOW_CREDENTIALS = True
+CSRF_TRUSTED_ORIGINS = get_list_env('CSRF_TRUSTED_ORIGINS', 'http://localhost:5173')
 AUTH_USER_MODEL = 'api.CustomUser'
 
 REST_FRAMEWORK = {
@@ -237,3 +220,6 @@ CELERY_TASK_STORE_EAGER_RESULT = not bool(CELERY_BROKER_URL)
 
 
 CRON_SECRET_KEY = os.getenv('CRON_SECRET_KEY', 'ma-cle-secrete-pour-le-cron-123!')
+STATICFILES_DIRS = [
+    BASE_DIR / 'static',
+]
