@@ -973,6 +973,71 @@ class FixedChargeViewSet(viewsets.ModelViewSet):
         user.current_balance -= provisioned_amt
         user.save(update_fields=['current_balance'])
 
+        # Invalider le cache summary du tableau de bord
+        cache.delete(f"dashboard_summary_{user.id}")
+
+    @transaction.atomic
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        pk = kwargs.get('pk')
+        try:
+            ledger_entry = MonthlyChargeLedger.objects.get(id=pk, blueprint__user=request.user)
+        except MonthlyChargeLedger.DoesNotExist:
+            return Response({"error": "Ligne de charge introuvable."}, status=status.HTTP_404_NOT_FOUND)
+
+        blueprint = ledger_entry.blueprint
+        serializer = self.get_serializer(blueprint, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+
+        due_date = serializer.validated_data.pop('due_date', None)
+        if due_date is None:
+            due_date = ledger_entry.due_date
+
+        due_day = due_date.day
+        blueprint = serializer.save(due_day=due_day)
+
+        new_provisioned_amt = blueprint.exact_amount if blueprint.is_fixed else blueprint.max_amount
+
+        user = request.user
+        if not ledger_entry.is_paid:
+            difference = ledger_entry.provisioned_amount - new_provisioned_amt
+            user.current_balance += difference
+            user.save(update_fields=['current_balance'])
+            ledger_entry.provisioned_amount = new_provisioned_amt
+
+        ledger_entry.name = blueprint.name
+        ledger_entry.due_date = due_date
+        ledger_entry.save()
+
+        # Invalider le cache summary du tableau de bord
+        cache.delete(f"dashboard_summary_{user.id}")
+
+        return Response(serializer.data)
+
+    @transaction.atomic
+    def destroy(self, request, *args, **kwargs):
+        pk = kwargs.get('pk')
+        try:
+            ledger_entry = MonthlyChargeLedger.objects.get(id=pk, blueprint__user=request.user)
+        except MonthlyChargeLedger.DoesNotExist:
+            return Response({"error": "Ligne de charge introuvable."}, status=status.HTTP_404_NOT_FOUND)
+
+        blueprint = ledger_entry.blueprint
+        user = request.user
+
+        # Restituer les fonds si non payé
+        if not ledger_entry.is_paid:
+            user.current_balance += ledger_entry.provisioned_amount
+            user.save(update_fields=['current_balance'])
+
+        # Supprimer le blueprint (suppression en cascade des ledger entries via la FK)
+        blueprint.delete()
+
+        # Invalider le cache summary du tableau de bord
+        cache.delete(f"dashboard_summary_{user.id}")
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
     @action(detail=True, methods=['post'], url_path='settle')
     @transaction.atomic
     def settle_charge(self, request, pk=None):
@@ -1011,6 +1076,9 @@ class FixedChargeViewSet(viewsets.ModelViewSet):
             transaction_type=TransactionHistory.TransactionType.EXPENSE,
             description=f"Prélèvement réglé : {ledger_entry.name} (Initialement estimé à {max_locked})"
         )
+
+        # Invalider le cache summary du tableau de bord
+        cache.delete(f"dashboard_summary_{user.id}")
 
         return Response({
             "message": "Paiement validé avec succès.",
