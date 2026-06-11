@@ -889,7 +889,7 @@ class DashboardSummaryView(APIView):
         total_resolved = stats['total_resolved'] or 0
         abandoned_intentions = stats['abandoned_intentions'] or 0
         mastery_ratio = int((abandoned_intentions / total_resolved) * 100) if total_resolved > 0 else 0
-        unpaid_ledgers = MonthlyChargeLedger.objects.filter(blueprint__user=user, paid_at__isnull=True).order_by('due_date')
+        unpaid_ledgers = MonthlyChargeLedger.objects.filter(blueprint__user=user).order_by('due_date')
         fixed_charges_serializer = MonthlyChargeLedgerSerializer(unpaid_ledgers, many=True)
         # 3. Objectif d'épargne actif
         active_goal = SavingsGoal.objects.filter(user=user, is_active=True).first()
