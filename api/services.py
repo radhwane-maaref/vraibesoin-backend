@@ -148,7 +148,7 @@ def extract_product_data_via_ai(image_file):
     client = genai.Client()
 
     # Utilisation du modèle Flash, optimisé pour les tâches multimodales rapides
-    model_name = 'gemini-3.5-flash'
+    model_name = 'gemini-3.1-flash-lite'
     img = Image.open(image_file)
     valid_categories = [choice.value for choice in ProductCategoryChoices]
     prompt = """

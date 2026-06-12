@@ -8,10 +8,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
 # --- Helper Functions for Environment Variables ---
 def get_bool_env(name, default=False):
     """Safely parse boolean environment variables."""
     return str(os.getenv(name, str(default))).lower() in ('true', '1', 't', 'yes', 'y')
+
 
 def get_list_env(name, default=''):
     """Safely parse comma-separated lists from environment variables."""
@@ -21,6 +23,7 @@ def get_list_env(name, default=''):
     # Safely strip accidental quotes from the whole string and individual items
     val = val.strip(' "\'')
     return [x.strip(' "\'') for x in val.split(',') if x.strip(' "\'')]
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -54,14 +57,14 @@ INSTALLED_APPS = [
     'corsheaders',
     'api.apps.ApiConfig',
     'django.contrib.postgres',
-    #'silk'
+    # 'silk'
 ]
 
 MIDDLEWARE = [
-    #'silk.middleware.SilkyMiddleware',
+    # 'silk.middleware.SilkyMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware', # Helps serve static files seamlessly in production
+    'whitenoise.middleware.WhiteNoiseMiddleware',  # Helps serve static files seamlessly in production
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -102,7 +105,7 @@ DATABASES = {
 
 # Password validation
 PASSWORD_HASHERS = [
-    'django.contrib.auth.hashers.Argon2PasswordHasher', 
+    'django.contrib.auth.hashers.Argon2PasswordHasher',
     'django.contrib.auth.hashers.PBKDF2PasswordHasher',
     'django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher',
     'django.contrib.auth.hashers.BCryptSHA256PasswordHasher',
@@ -152,7 +155,8 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ),
     'DEFAULT_THROTTLE_RATES': {
-        'password_reset': '2/hour', }
+        'password_reset': '2/hour', },
+    'EXCEPTION_HANDLER': 'api.exceptions.custom_exception_handler',
 }
 
 SIMPLE_JWT = {
@@ -175,7 +179,7 @@ FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
 SILKY_AUTHENTICATION = False
 SILKY_AUTHORISATION = False
 SILKY_MAX_REQUEST_BODY_SIZE = 1024  # kb
-SILKY_MAX_RESPONSE_BODY_SIZE = 1024 # kb
+SILKY_MAX_RESPONSE_BODY_SIZE = 1024  # kb
 
 # --- Production Security Settings ---
 if not DEBUG:
@@ -184,14 +188,14 @@ if not DEBUG:
     SECURE_HSTS_PRELOAD = True
     # Honor the 'X-Forwarded-Proto' header for request.is_secure()
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-    
+
     # Enforce SSL redirects (disable this if your host does it at the load balancer level and causes a loop)
     SECURE_SSL_REDIRECT = get_bool_env('SECURE_SSL_REDIRECT', True)
-    
+
     # Secure Cookies
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
-    
+
     # Security Headers
     SECURE_BROWSER_XSS_FILTER = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
@@ -215,9 +219,6 @@ CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', os.getenv('REDIS_URL'))
 # Si aucun broker n'est configuré (ex: pas de Redis sur Render), on exécute les tâches de manière synchrone
 CELERY_TASK_ALWAYS_EAGER = not bool(CELERY_BROKER_URL)
 CELERY_TASK_STORE_EAGER_RESULT = not bool(CELERY_BROKER_URL)
-
-
-
 
 CRON_SECRET_KEY = os.getenv('CRON_SECRET_KEY', 'ma-cle-secrete-pour-le-cron-123!')
 STATICFILES_DIRS = [
