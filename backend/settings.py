@@ -1,3 +1,12 @@
+"""
+Configuration principale du projet Django.
+
+Ce module contient toutes les variables de configuration et les paramètres globaux
+nécessaires à l'exécution de l'application 'backend'. Il gère l'interfaçage avec la
+base de données, les politiques de sécurité (CORS, JWT, SSL), et l'intégration de
+services tiers (Celery, Redis, Brevo).
+"""
+
 import os
 from urllib.parse import urlparse, parse_qsl
 
@@ -9,32 +18,43 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-# --- Helper Functions for Environment Variables ---
 def get_bool_env(name, default=False):
-    """Safely parse boolean environment variables."""
+    """
+    Extrait et convertit une variable d'environnement en valeur booléenne.
+
+    Args:
+        name (str): Le nom de la variable d'environnement.
+        default (bool, optional): La valeur par défaut si la variable est absente. Defaults to False.
+
+    Returns:
+        bool: True si la valeur de la variable correspond à 'true', '1', 't', 'yes', ou 'y' (insensible à la casse), sinon False.
+    """
     return str(os.getenv(name, str(default))).lower() in ('true', '1', 't', 'yes', 'y')
 
 
 def get_list_env(name, default=''):
-    """Safely parse comma-separated lists from environment variables."""
+    """
+    Extrait et convertit une chaîne de caractères séparée par des virgules depuis
+    les variables d'environnement en une liste Python.
+
+    Args:
+        name (str): Le nom de la variable d'environnement.
+        default (str, optional): La valeur par défaut si la variable est absente. Defaults to ''.
+
+    Returns:
+        list[str]: La liste des éléments extraits et nettoyés de leurs guillemets.
+    """
     val = os.getenv(name, default)
     if not val:
         val = default
-    # Safely strip accidental quotes from the whole string and individual items
     val = val.strip(' "\'')
     return [x.strip(' "\'') for x in val.split(',') if x.strip(' "\'')]
 
 
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
-
-# SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.getenv('SECRET_KEY', 'your-fallback-dev-key')
 
-# SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = get_bool_env('DEBUG', True)
 
 ALLOWED_HOSTS = get_list_env('ALLOWED_HOSTS', 'localhost,127.0.0.1')
@@ -45,7 +65,6 @@ if RENDER_EXTERNAL_HOSTNAME:
 MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
-# Application definition
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -64,7 +83,7 @@ MIDDLEWARE = [
     # 'silk.middleware.SilkyMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware',  # Helps serve static files seamlessly in production
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -92,10 +111,6 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'backend.wsgi.application'
 
-# Database
-
-# dj_database_url automatically parses the DATABASE_URL provided by Render/Neon.
-# If DATABASE_URL is not found, it gracefully falls back to local PostgreSQL variables.
 DATABASES = {
     'default': dj_database_url.config(
         default=f"postgres://{os.getenv('DB_USER', 'postgres')}:{os.getenv('DB_PASSWORD', 'postgres')}@{os.getenv('DB_HOST', 'localhost')}:{os.getenv('DB_PORT', '5432')}/{os.getenv('DB_NAME', 'postgres')}",
@@ -103,7 +118,6 @@ DATABASES = {
     )
 }
 
-# Password validation
 PASSWORD_HASHERS = [
     'django.contrib.auth.hashers.Argon2PasswordHasher',
     'django.contrib.auth.hashers.PBKDF2PasswordHasher',
@@ -126,13 +140,11 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-# Internationalization
 LANGUAGE_CODE = 'fr'
 TIME_ZONE = 'Africa/Tunis'
 USE_I18N = True
 USE_TZ = True
 
-# Static files (CSS, JavaScript, Images)
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 STORAGES = {
@@ -141,7 +153,6 @@ STORAGES = {
     },
 }
 
-# CORS Configuration
 CORS_ALLOWED_ORIGINS = get_list_env('CORS_ALLOWED_ORIGINS', 'http://localhost:5173')
 CORS_ALLOW_CREDENTIALS = True
 CSRF_TRUSTED_ORIGINS = get_list_env('CSRF_TRUSTED_ORIGINS', 'http://localhost:5173')
@@ -178,29 +189,20 @@ FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
 
 SILKY_AUTHENTICATION = False
 SILKY_AUTHORISATION = False
-SILKY_MAX_REQUEST_BODY_SIZE = 1024  # kb
-SILKY_MAX_RESPONSE_BODY_SIZE = 1024  # kb
+SILKY_MAX_REQUEST_BODY_SIZE = 1024
+SILKY_MAX_RESPONSE_BODY_SIZE = 1024
 
-# --- Production Security Settings ---
 if not DEBUG:
     SECURE_HSTS_SECONDS = 31536000
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
-    # Honor the 'X-Forwarded-Proto' header for request.is_secure()
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-
-    # Enforce SSL redirects (disable this if your host does it at the load balancer level and causes a loop)
     SECURE_SSL_REDIRECT = get_bool_env('SECURE_SSL_REDIRECT', True)
-
-    # Secure Cookies
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
-
-    # Security Headers
     SECURE_BROWSER_XSS_FILTER = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
 
-# --- Cache Configuration ---
 REDIS_URL = os.getenv('REDIS_URL')
 if REDIS_URL:
     CACHES = {
@@ -213,10 +215,8 @@ if REDIS_URL:
         }
     }
 
-# --- Celery Configuration ---
-# Use Upstash Redis as Celery broker by falling back to REDIS_URL
 CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', os.getenv('REDIS_URL'))
-# Si aucun broker n'est configuré (ex: pas de Redis sur Render), on exécute les tâches de manière synchrone
+# Bascule en exécution synchrone si aucun broker n'est configuré
 CELERY_TASK_ALWAYS_EAGER = not bool(CELERY_BROKER_URL)
 CELERY_TASK_STORE_EAGER_RESULT = not bool(CELERY_BROKER_URL)
 

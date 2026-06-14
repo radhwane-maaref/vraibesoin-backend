@@ -15,18 +15,47 @@ import json
 
 
 class OnboardingSerializer(serializers.ModelSerializer):
+    """
+    Sérialiseur pour la phase d'intégration (onboarding) de l'utilisateur.
+    
+    Gère la validation et l'enregistrement des catégories socio-professionnelles,
+    des objectifs financiers, de la date de naissance et de la devise préférée.
+    """
+
     class Meta:
         model = CustomUser
         fields = ['socio_professional_categories', 'financial_goals','birth_date', 'preferred_currency']
 
     def validate_socio_professional_categories(self, value):
+        """
+        Valide les catégories socio-professionnelles sélectionnées.
+
+        Args:
+            value (list): La liste des catégories sélectionnées.
+
+        Returns:
+            list: La liste validée.
+
+        Raises:
+            serializers.ValidationError: Si la liste est vide ou contient plus de 3 éléments.
+        """
         if not value or not (1 <= len(value) <= 3):
             raise serializers.ValidationError("Veuillez sélectionner entre 1 et 3 catégories.")
         return value
 
     def validate_financial_goals(self, value):
-        # [GARDER VOTRE LOGIQUE ACTUELLE DE VALIDATION ICI]
-        # (La normalisation et la suppression des doublons)
+        """
+        Valide et normalise les objectifs financiers de l'utilisateur.
+
+        Args:
+            value (list): La liste des objectifs financiers bruts.
+
+        Returns:
+            list: La liste des objectifs normalisés sans doublons.
+
+        Raises:
+            serializers.ValidationError: Si le nombre d'objectifs uniques n'est pas compris entre 1 et 3.
+        """
         normalized = []
         seen = set()
         for goal in value:
@@ -41,18 +70,48 @@ class OnboardingSerializer(serializers.ModelSerializer):
         return normalized
 
     def validate_birth_date(self, value):
-        """Vérifie que la date de naissance est logique (dans le passé)."""
+        """
+        Vérifie que la date de naissance est logique (dans le passé).
+        
+        Args:
+            value (datetime.date): La date de naissance fournie.
+
+        Returns:
+            datetime.date: La date validée.
+
+        Raises:
+            serializers.ValidationError: Si la date est dans le futur ou égale à aujourd'hui.
+        """
         if value and value >= timezone.now().date():
             raise serializers.ValidationError(_("La date de naissance doit être dans le passé."))
         return value
 
     def validate_preferred_currency(self, value):
-        """Standardise la devise en code ISO à 3 lettres majuscules."""
+        """
+        Standardise la devise en code ISO à 3 lettres majuscules.
+        
+        Args:
+            value (str): Le code de la devise fourni.
+
+        Returns:
+            str: Le code de devise formaté et nettoyé.
+
+        Raises:
+            serializers.ValidationError: Si le code ne fait pas exactement 3 caractères.
+        """
         if not value or len(value.strip()) != 3:
             raise serializers.ValidationError(_("Le format de la devise est invalide (ex: TND, EUR, USD)."))
         return value.upper().strip()
 
+
 class CustomUserSerializer(serializers.ModelSerializer):
+    """
+    Sérialiseur complet pour le modèle CustomUser.
+    
+    Expose l'ensemble des informations de profil, incluant des champs
+    en lecture seule calculés et des listes correctement formatées.
+    """
+    
     full_name = serializers.SerializerMethodField()
     socio_professional_categories = serializers.ListField(
         child=serializers.CharField(),
@@ -81,8 +140,19 @@ class CustomUserSerializer(serializers.ModelSerializer):
             'current_balance': {'read_only': True}
         }
 
-    # ✅ Rapatrié et aligné correctement dans CustomUserSerializer
     def validate_financial_goals(self, value):
+        """
+        Valide et formate les objectifs financiers lors des mises à jour de profil.
+
+        Args:
+            value (list or str): Les objectifs fournis (pouvant être en JSON string).
+
+        Returns:
+            list: La liste des objectifs validés.
+
+        Raises:
+            serializers.ValidationError: Si le format est incorrect ou le nombre d'éléments invalide.
+        """
         if isinstance(value, str):
             try:
                 value = json.loads(value)
@@ -107,8 +177,20 @@ class CustomUserSerializer(serializers.ModelSerializer):
 
         return normalized
 
-    # ✅ Rapatrié et aligné correctement dans CustomUserSerializer
     def validate_socio_professional_categories(self, value):
+        """
+        Valide et formate les catégories socio-professionnelles lors des mises à jour.
+
+        Args:
+            value (list or str): Les catégories fournies (pouvant être en JSON string).
+
+        Returns:
+            list: La liste des catégories validées.
+
+        Raises:
+            serializers.ValidationError: Si le format est incorrect, le nombre d'éléments
+                invalide, ou en cas d'incompatibilité des choix.
+        """
         if isinstance(value, str):
             try:
                 value = json.loads(value)
@@ -129,12 +211,27 @@ class CustomUserSerializer(serializers.ModelSerializer):
 
         return value
 
-    # ✅ Sorti de l'imbrication et rattaché à CustomUserSerializer
     def get_full_name(self, obj):
+        """
+        Récupère le nom complet de l'utilisateur.
+
+        Args:
+            obj (CustomUser): L'instance de l'utilisateur.
+
+        Returns:
+            str: La concaténation du prénom et du nom, sans espaces superflus.
+        """
         return f"{obj.first_name} {obj.last_name}".strip()
 
 
 class MonthlyChargeLedgerSerializer(serializers.ModelSerializer):
+    """
+    Sérialiseur pour le suivi mensuel des charges récurrentes.
+    
+    Expose les informations lues depuis le modèle de base (blueprint)
+    pour un affichage consolidé.
+    """
+    
     is_fixed = serializers.ReadOnlyField(source='blueprint.is_fixed')
     max_amount = serializers.ReadOnlyField(source='blueprint.max_amount')
     min_amount = serializers.ReadOnlyField(source='blueprint.min_amount')
@@ -150,6 +247,10 @@ class MonthlyChargeLedgerSerializer(serializers.ModelSerializer):
 
 
 class RecurringChargeBlueprintSerializer(serializers.ModelSerializer):
+    """
+    Sérialiseur pour la configuration des charges récurrentes.
+    """
+    
     due_date = serializers.DateField(write_only=True, required=False)
 
     class Meta:
@@ -157,6 +258,18 @@ class RecurringChargeBlueprintSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'is_fixed', 'exact_amount', 'min_amount', 'max_amount', 'due_date']
 
     def validate(self, attrs):
+        """
+        Valide la cohérence des montants selon si la charge est fixe ou variable.
+
+        Args:
+            attrs (dict): Le dictionnaire des attributs fournis.
+
+        Returns:
+            dict: Les attributs validés et nettoyés.
+
+        Raises:
+            serializers.ValidationError: Si la configuration des montants est incohérente.
+        """
         is_fixed = attrs.get('is_fixed', False)
         if is_fixed:
             attrs['min_amount'] = None
@@ -177,21 +290,45 @@ class RecurringChargeBlueprintSerializer(serializers.ModelSerializer):
         return attrs
 
     def create(self, validated_data):
+        """
+        Crée une nouvelle instance et invalide le cache correspondant.
+
+        Args:
+            validated_data (dict): Les données validées.
+
+        Returns:
+            RecurringChargeBlueprint: L'instance créée.
+        """
         instance = super().create(validated_data)
-        # Invalidation du cache Upstash Redis pour ce user
         from django.core.cache import cache
         cache.delete(f"user_charges_json_{instance.user.id}")
         return instance
 
     def update(self, instance, validated_data):
+        """
+        Met à jour une instance existante et invalide le cache correspondant.
+
+        Args:
+            instance (RecurringChargeBlueprint): L'instance à mettre à jour.
+            validated_data (dict): Les données validées.
+
+        Returns:
+            RecurringChargeBlueprint: L'instance mise à jour.
+        """
         instance = super().update(instance, validated_data)
-        # Invalidation du cache Upstash Redis pour ce user
         from django.core.cache import cache
         cache.delete(f"user_charges_json_{instance.user.id}")
         return instance
 
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
+    """
+    Sérialiseur pour l'inscription d'un nouvel utilisateur.
+    
+    Gère la validation du mot de passe et de sa confirmation, ainsi que
+    le hachage sécurisé du mot de passe en base de données.
+    """
+    
     password = serializers.CharField(
         write_only=True,
         required=True,
@@ -225,6 +362,18 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         }
 
     def validate(self, attrs):
+        """
+        Vérifie que les deux mots de passe fournis sont identiques.
+
+        Args:
+            attrs (dict): Le dictionnaire des attributs fournis.
+
+        Returns:
+            dict: Les attributs validés.
+
+        Raises:
+            serializers.ValidationError: Si les mots de passe ne correspondent pas.
+        """
         password = attrs.get('password')
         confirm_password = attrs.get('confirm_password')
 
@@ -236,25 +385,57 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         return attrs
 
     def create(self, validated_data):
+        """
+        Crée un nouvel utilisateur en hachant le mot de passe.
+
+        Args:
+            validated_data (dict): Les données validées.
+
+        Returns:
+            CustomUser: L'utilisateur créé.
+        """
         validated_data.pop('confirm_password', None)
         validated_data['password'] = make_password(validated_data.get('password'))
         return super().create(validated_data)
 
 
 def validate_not_empty_string(value, error_message):
-    """Utility to ensure string fields are not just whitespace."""
+    """
+    Assure qu'un champ texte n'est pas uniquement constitué d'espaces.
+
+    Args:
+        value (str): La valeur à valider.
+        error_message (str): Le message d'erreur à renvoyer en cas d'échec.
+
+    Returns:
+        str: La valeur originale si elle est valide.
+
+    Raises:
+        serializers.ValidationError: Si la chaîne est vide ou ne contient que des espaces.
+    """
     if not value.strip():
         raise serializers.ValidationError(error_message)
     return value
 
 
 class ReflectionQuestionSerializer(serializers.ModelSerializer):
+    """
+    Sérialiseur pour les questions de réflexion générées par l'IA.
+    """
+    
     class Meta:
         model = ReflectionQuestion
         fields = ['id', 'purchase_intention', 'question_text', 'ai_options', 'user_answer']
 
 
 class PurchaseIntentionSerializer(serializers.ModelSerializer):
+    """
+    Sérialiseur pour la gestion des intentions d'achat.
+    
+    Intègre les questions de réflexion imbriquées et effectue des validations
+    contextuelles selon le type de portefeuille choisi (solde principal ou enveloppe).
+    """
+    
     questions = ReflectionQuestionSerializer(many=True, read_only=True)
 
     class Meta:
@@ -270,28 +451,72 @@ class PurchaseIntentionSerializer(serializers.ModelSerializer):
             'user_final_decision', 'created_at', 'updated_at', 'cooldown_expires_at'
         ]
 
-    # ✅ Désindenté d'un cran : Désormais rattaché à la classe principale et actif
     def validate_product_price(self, value):
-        """Valide que le prix est strictement positif."""
+        """
+        Valide que le prix est strictement positif.
+        
+        Args:
+            value (Decimal): Le prix du produit.
+
+        Returns:
+            Decimal: Le prix validé.
+
+        Raises:
+            serializers.ValidationError: Si le prix est négatif ou nul.
+        """
         if value <= 0:
             raise serializers.ValidationError(_("Le prix du produit doit être strictement positif."))
         return value
 
     def validate_product_name(self, value):
-        """Évite qu'un utilisateur envoie un nom de produit composé uniquement d'espaces."""
+        """
+        Vérifie que le nom du produit est valide et non vide.
+
+        Args:
+            value (str): Le nom du produit.
+
+        Returns:
+            str: Le nom validé.
+
+        Raises:
+            serializers.ValidationError: Si le nom est invalide.
+        """
         return validate_not_empty_string(value, _("Le nom du produit est obligatoire."))
 
     def validate_product_category(self, value):
+        """
+        Vérifie que la catégorie du produit est valide et non vide.
+
+        Args:
+            value (str): La catégorie.
+
+        Returns:
+            str: La catégorie validée.
+
+        Raises:
+            serializers.ValidationError: Si la catégorie est invalide.
+        """
         return validate_not_empty_string(value, _("La catégorie du produit est obligatoire."))
 
     def validate(self, attrs):
-        # Valider d'abord le reste via parent
+        """
+        Effectue une validation globale de l'intention d'achat, notamment
+        concernant la disponibilité des fonds dans le portefeuille sélectionné.
+
+        Args:
+            attrs (dict): Le dictionnaire des attributs fournis.
+
+        Returns:
+            dict: Les attributs validés.
+
+        Raises:
+            serializers.ValidationError: Si les fonds sont insuffisants ou l'enveloppe introuvable.
+        """
         attrs = super().validate(attrs)
 
         wallet_type = attrs.get('wallet_type', 'main')
         product_price = attrs.get('product_price', 0)
 
-        # On ne vérifie le solde que lors de la création initiale (POST)
         request = self.context.get('request')
         if request and request.method == 'POST':
             user = request.user
@@ -325,6 +550,10 @@ class PurchaseIntentionSerializer(serializers.ModelSerializer):
 
 
 class ErrorLogSerializer(serializers.ModelSerializer):
+    """
+    Sérialiseur pour la consultation des journaux d'erreurs.
+    """
+    
     assigned_to_email = serializers.SerializerMethodField()
 
     class Meta:
@@ -336,10 +565,23 @@ class ErrorLogSerializer(serializers.ModelSerializer):
         ]
 
     def get_assigned_to_email(self, obj):
+        """
+        Récupère l'e-mail de la personne assignée à la résolution de l'erreur.
+
+        Args:
+            obj (ErrorLog): L'instance du journal d'erreur.
+
+        Returns:
+            str or None: L'e-mail de l'assigné, ou None.
+        """
         return obj.assigned_to.email if obj.assigned_to else None
 
 
 class ResetPasswordEmailRequestSerializer(serializers.Serializer):
+    """
+    Sérialiseur pour la requête de réinitialisation de mot de passe.
+    """
+    
     email = serializers.EmailField(
         min_length=2,
         error_messages={
@@ -350,6 +592,12 @@ class ResetPasswordEmailRequestSerializer(serializers.Serializer):
 
 
 class SetNewPasswordSerializer(serializers.Serializer):
+    """
+    Sérialiseur pour la définition d'un nouveau mot de passe.
+    
+    Effectue les validations standards de sécurité Django sur le mot de passe.
+    """
+    
     password = serializers.CharField(
         write_only=True,
         error_messages={
@@ -364,6 +612,18 @@ class SetNewPasswordSerializer(serializers.Serializer):
     )
 
     def validate(self, attrs):
+        """
+        Vérifie la correspondance et la force du mot de passe.
+
+        Args:
+            attrs (dict): Le dictionnaire contenant le mot de passe et sa confirmation.
+
+        Returns:
+            dict: Les attributs validés.
+
+        Raises:
+            serializers.ValidationError: Si la confirmation échoue ou si le mot de passe est trop faible.
+        """
         password = attrs.get('password')
         password_confirm = attrs.get('password_confirm')
 
@@ -383,6 +643,10 @@ class SetNewPasswordSerializer(serializers.Serializer):
 
 
 class ProductImageExtractionSerializer(serializers.Serializer):
+    """
+    Sérialiseur pour valider une image de produit téléchargée pour analyse.
+    """
+    
     image = serializers.ImageField(
         required=True,
         error_messages={
@@ -392,6 +656,18 @@ class ProductImageExtractionSerializer(serializers.Serializer):
     )
 
     def validate_image(self, value):
+        """
+        Contrôle la taille et le type MIME de l'image.
+
+        Args:
+            value (UploadedFile): Le fichier image.
+
+        Returns:
+            UploadedFile: Le fichier validé.
+
+        Raises:
+            serializers.ValidationError: Si le fichier dépasse 5 Mo ou n'a pas un format supporté.
+        """
         max_size = 5 * 1024 * 1024
         if value.size > max_size:
             raise serializers.ValidationError(_("L'image ne doit pas dépasser 5 MB."))
@@ -412,6 +688,10 @@ class ProductImageExtractionSerializer(serializers.Serializer):
 
 
 class FinalDecisionUpdateSerializer(serializers.ModelSerializer):
+    """
+    Sérialiseur pour la mise à jour de la décision finale d'une intention d'achat.
+    """
+    
     class Meta:
         model = PurchaseIntention
         fields = ['user_final_decision']
@@ -420,31 +700,72 @@ class FinalDecisionUpdateSerializer(serializers.ModelSerializer):
         }
 
     def validate_user_final_decision(self, value):
+        """
+        Vérifie que la décision fournie fait partie des choix autorisés.
+
+        Args:
+            value (str): La décision finale de l'utilisateur.
+
+        Returns:
+            str: La décision validée.
+
+        Raises:
+            serializers.ValidationError: Si le choix n'est pas reconnu.
+        """
         if value not in PurchaseIntention.DecisionChoices.values:
             raise serializers.ValidationError(_("Décision invalide."))
         return value
 
 
 class AppFeedbackSerializer(serializers.ModelSerializer):
+    """
+    Sérialiseur pour la soumission d'avis sur l'application.
+    """
+    
     class Meta:
         model = AppFeedback
         fields = ['id', 'user', 'rating', 'comment', 'created_at', 'subject']
         read_only_fields = ['id', 'user', 'created_at']
 
     def validate_rating(self, value):
+        """
+        Vérifie que la note se situe dans les bornes autorisées.
+
+        Args:
+            value (int): La note soumise.
+
+        Returns:
+            int: La note validée.
+
+        Raises:
+            serializers.ValidationError: Si la note n'est pas comprise entre 1 et 5.
+        """
         if value < 1 or value > 5:
             raise serializers.ValidationError(_("La note doit être comprise entre 1 et 5 étoiles."))
         return value
 
 
 class IncomeStreamSerializer(serializers.ModelSerializer):
+    """
+    Sérialiseur pour la gestion des sources de revenus.
+    """
+    
     class Meta:
         model = IncomeStream
         fields = ['id', 'name', 'amount', 'frequency', 'next_payment_date', 'is_active']
 
     def validate_amount(self, value):
         """
-        Garantit que le montant du revenu est strictement supérieur à zéro.
+        Garantit que le montant du revenu est strictement positif.
+        
+        Args:
+            value (Decimal): Le montant du revenu.
+
+        Returns:
+            Decimal: Le montant validé.
+
+        Raises:
+            serializers.ValidationError: Si le montant est inférieur ou égal à zéro.
         """
         if value <= 0:
             raise serializers.ValidationError(
@@ -452,19 +773,38 @@ class IncomeStreamSerializer(serializers.ModelSerializer):
             )
         return value
 
+
 class BudgetEnvelopeSerializer(serializers.ModelSerializer):
+    """
+    Sérialiseur pour la gestion des enveloppes budgétaires.
+    """
+    
     class Meta:
         model = BudgetEnvelope
         fields = ['id', 'name', 'amount', 'total_spent', 'start_date', 'end_date', 'category', 'created_at']
         read_only_fields = ['id', 'created_at']
 
     def validate(self, attrs):
+        """
+        Effectue des contrôles de cohérence globaux sur l'enveloppe budgétaire.
+
+        S'assure que les dates sont cohérentes et que les dépenses ne dépassent
+        pas le budget alloué.
+
+        Args:
+            attrs (dict): Les attributs de l'enveloppe.
+
+        Returns:
+            dict: Les attributs validés.
+
+        Raises:
+            serializers.ValidationError: Si une incohérence temporelle ou financière est détectée.
+        """
         start_date = attrs.get('start_date')
         end_date = attrs.get('end_date')
         amount = attrs.get('amount')
         total_spent = attrs.get('total_spent', 0)
 
-        # Validation : La date de fin doit être >= date de début
         if start_date and end_date and end_date < start_date:
             raise serializers.ValidationError({
                 "dates": _("La date de fin doit être postérieure ou égale à la date de début.")
@@ -483,6 +823,13 @@ class BudgetEnvelopeSerializer(serializers.ModelSerializer):
 
 
 class TransactionHistorySerializer(serializers.ModelSerializer):
+    """
+    Sérialiseur pour l'historique des transactions.
+    
+    Supporte la rétrocompatibilité pour le traitement de descriptions de type 'note' 
+    et s'assure de l'association d'une catégorie pour les transactions essentielles.
+    """
+    
     note = serializers.CharField(write_only=True, required=False, allow_blank=True)
     category = serializers.CharField(required=False, allow_blank=True)
 
@@ -492,16 +839,26 @@ class TransactionHistorySerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'date', 'description']
 
     def validate(self, attrs):
+        """
+        Vérifie la cohérence de la transaction et génère automatiquement la description.
+
+        Args:
+            attrs (dict): Les attributs de la transaction.
+
+        Returns:
+            dict: Les attributs validés et formatés.
+
+        Raises:
+            serializers.ValidationError: Si la catégorie est manquante pour une dépense essentielle.
+        """
         transaction_type = attrs.get('transaction_type')
         is_essential = attrs.get('is_essential', False)
 
-        # 1. Validation de la catégorie si c'est une dépense essentielle
         if is_essential and not attrs.get('category'):
             raise serializers.ValidationError({
                 "category": _("La catégorie est requise pour une dépense essentielle.")
             })
 
-        # 2. Rétrocompatibilité : Mapper 'note' vers 'description'
         note = attrs.pop('note', '').strip()
         cat = attrs.get('category', '').strip()
 
@@ -514,6 +871,10 @@ class TransactionHistorySerializer(serializers.ModelSerializer):
 
 
 class AdminFeedbackSerializer(serializers.ModelSerializer):
+    """
+    Sérialiseur d'interface administrateur pour l'affichage des avis.
+    """
+    
     user_email = serializers.EmailField(source='user.email', read_only=True)
 
     class Meta:
@@ -522,6 +883,10 @@ class AdminFeedbackSerializer(serializers.ModelSerializer):
 
 
 class AdminUserListSerializer(serializers.ModelSerializer):
+    """
+    Sérialiseur d'interface administrateur pour l'affichage synthétique des utilisateurs.
+    """
+    
     full_name = serializers.SerializerMethodField()
 
     class Meta:
@@ -532,4 +897,13 @@ class AdminUserListSerializer(serializers.ModelSerializer):
         ]
 
     def get_full_name(self, obj):
+        """
+        Récupère le nom complet de l'utilisateur.
+
+        Args:
+            obj (CustomUser): L'instance de l'utilisateur.
+
+        Returns:
+            str: Le nom complet.
+        """
         return f"{obj.first_name} {obj.last_name}".strip()

@@ -16,7 +16,17 @@ logger = logging.getLogger(__name__)
 
 @shared_task
 def send_email_task(subject, message, recipient_list):
-    """Celery task to send emails asynchronously."""
+    """
+    Tâche asynchrone pour l'envoi d'e-mails via Celery.
+
+    Args:
+        subject (str): L'objet de l'e-mail.
+        message (str): Le contenu de l'e-mail.
+        recipient_list (list): Liste des adresses e-mail destinataires.
+
+    Returns:
+        None
+    """
     try:
         send_mail(
             subject=subject,
@@ -41,7 +51,15 @@ def send_email_task(subject, message, recipient_list):
 
 @shared_task
 def fetch_and_cache_daily_advice_task(user_id):
-    """Celery task to fetch and cache daily advice asynchronously."""
+    """
+    Tâche asynchrone pour générer et mettre en cache le conseil quotidien d'un utilisateur.
+
+    Args:
+        user_id (int): L'identifiant de l'utilisateur concerné.
+
+    Returns:
+        None
+    """
     from api.services import fetch_and_cache_daily_advice
     try:
         fetch_and_cache_daily_advice(user_id, execute_now=True)
@@ -54,20 +72,26 @@ def fetch_and_cache_daily_advice_task(user_id):
 
 @shared_task
 def process_scheduled_incomes():
-    """Celery task intended to run daily at midnight via Celery Beat."""
+    """
+    Exécute le traitement des revenus planifiés.
+
+    Conçue pour être exécutée quotidiennement, cette tâche identifie les flux de revenus
+    actifs arrivés à échéance, met à jour les soldes utilisateurs, historise les transactions,
+    et planifie la prochaine date de paiement en fonction de la fréquence définie.
+
+    Returns:
+        None
+    """
     today = timezone.now().date()
 
-    # Get all active incomes due today or earlier (in case task missed a day)
     due_incomes = IncomeStream.objects.filter(is_active=True, next_payment_date__lte=today)
 
     for income in due_incomes:
         with transaction.atomic():
-            # 1. Add amount to user's balance
             user = income.user
             user.current_balance += income.amount
             user.save(update_fields=['current_balance'])
 
-            # 2. Log the transaction
             TransactionHistory.objects.create(
                 user=user,
                 amount=income.amount,
@@ -75,7 +99,6 @@ def process_scheduled_incomes():
                 description=f"Revenu automatique : {income.name}"
             )
 
-            # 3. Calculate next payment date
             if income.frequency == 'ONE_TIME':
                 income.is_active = False
             elif income.frequency == 'DAILY':
@@ -95,18 +118,22 @@ def process_scheduled_incomes():
 @shared_task
 def generate_monthly_ledger_for_new_cycle():
     """
-    Parcourt tous les Blueprints actifs pour instancier les lignes du nouveau mois
-    et applique le verrouillage automatique des fonds.
+    Parcourt l'ensemble des plans de charges récurrentes (Blueprints) actifs pour instancier 
+    les enregistrements mensuels (Ledgers) correspondants.
+    
+    Applique automatiquement le verrouillage des fonds sur le solde de l'utilisateur
+    en déduisant le montant maximum prévu pour chaque charge.
+
+    Returns:
+        None
     """
     today = timezone.now().date()
-    # On cible le mois courant
     active_blueprints = RecurringChargeBlueprint.objects.filter(is_active=True)
 
     for blueprint in active_blueprints:
-        # Construction de la date exacte pour ce mois-ci
-        target_due_date = today.replace(day=min(blueprint.due_day, 28)) # Sécurité contre les fins de mois (ex: 29, 30, 31 février)
+        # Sécurité contre les débordements de fin de mois (ex: 29, 30, 31 février n'existant pas)
+        target_due_date = today.replace(day=min(blueprint.due_day, 28))
 
-        # On vérifie s'il n'existe pas déjà pour éviter les doublons accidentels
         exists = MonthlyChargeLedger.objects.filter(blueprint=blueprint, due_date=target_due_date).exists()
         if not exists:
             with transaction.atomic():
@@ -120,7 +147,7 @@ def generate_monthly_ledger_for_new_cycle():
                     exact_amount=blueprint.exact_amount,
                     due_date=target_due_date
                 )
-                # Sécurisation automatique immédiate sur le solde de l'utilisateur
+                
                 user = blueprint.user
                 user.current_balance -= blueprint.max_amount
                 user.save(update_fields=['current_balance'])

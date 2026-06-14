@@ -1,4 +1,3 @@
-# api/services.py
 import json
 import logging
 import threading
@@ -18,19 +17,25 @@ logger = logging.getLogger(__name__)
 
 
 def verify_google_token(token: str) -> dict:
-    """Verifies the Google JWT or Access Token and extracts user info."""
+    """
+    Vérifie le jeton d'accès ou JWT fourni par Google et extrait les informations utilisateur.
+
+    Args:
+        token (str): Le jeton Google (Access Token ou ID Token/JWT).
+
+    Returns:
+        dict: Les données extraites du jeton si la vérification réussit, sinon None.
+    """
     if not token:
         print("❌ verify_google_token: Token is empty")
         return None
 
-    # Check cache first (Fast Redis hit)
     cache_key = f"google_token_{hash(token)}"
     cached_result = cache.get(cache_key)
     if cached_result:
         return cached_result
 
     try:
-        # Check if the token is an Access Token (starts with ya29.)
         if token.startswith('ya29.'):
             response = std_requests.get(
                 'https://www.googleapis.com/oauth2/v3/userinfo',
@@ -38,31 +43,27 @@ def verify_google_token(token: str) -> dict:
             )
             if response.status_code == 200:
                 data = response.json()
-                cache.set(cache_key, data, timeout=300)  # Cache for 5 mins
+                cache.set(cache_key, data, timeout=300)
                 return data
             else:
                 print(f"❌ verify_google_token Access Token failed: {response.text}")
                 logger.error(f"Google Access Token verification failed: {response.text}")
                 return None
 
-        # Otherwise, treat it as an ID Token (JWT)
         client_id = settings.GOOGLE_OAUTH_CLIENT_ID
         if client_id:
             client_id = client_id.strip(' "\'')
 
-        # Securely verifies the token signature, expiration, and audience
         idinfo = id_token.verify_oauth2_token(
             token,
             google_requests.Request(),
             client_id
         )
 
-        # Returns the decoded JWT payload (e.g., idinfo['email'], idinfo['sub'])
-        cache.set(cache_key, idinfo, timeout=300)  # Cache for 5 mins
+        cache.set(cache_key, idinfo, timeout=300)
         return idinfo
 
     except ValueError as e:
-        # Token is invalid, expired, or has the wrong audience
         print(f"❌ verify_google_token failed: {str(e)}")
         logger.error(f"Google token verification failed: {e}")
         return None
@@ -72,7 +73,16 @@ def verify_google_token(token: str) -> dict:
 
 
 def send_password_reset_email(email: str, reset_url: str):
-    """Sends the reset email via Brevo synchronously (immediate delivery)."""
+    """
+    Envoie un e-mail contenant le lien de réinitialisation du mot de passe.
+
+    Args:
+        email (str): L'adresse e-mail de destination.
+        reset_url (str): L'URL permettant de réinitialiser le mot de passe.
+
+    Returns:
+        None
+    """
     subject = "Vrai Besoin - Réinitialisation de votre mot de passe"
     message = f"Bonjour,\n\nVous avez demandé la réinitialisation de votre mot de passe. Cliquez sur le lien suivant : {reset_url}\n\nSi vous n'êtes pas à l'origine de cette demande, ignorez cet e-mail."
 
@@ -87,7 +97,16 @@ def send_password_reset_email(email: str, reset_url: str):
 
 
 def send_otp_email(email: str, otp_code: str):
-    """Envoie l'e-mail de vérification contenant le code OTP de façon synchrone (immédiate)."""
+    """
+    Envoie un e-mail contenant le code de vérification OTP (One-Time Password).
+
+    Args:
+        email (str): L'adresse e-mail de destination.
+        otp_code (str): Le code OTP à usage unique.
+
+    Returns:
+        None
+    """
     subject = "Vrai Besoin - Votre code de vérification"
     message = f"Bonjour,\n\nVotre code de vérification à 6 chiffres est : {otp_code}\n\nCe code est valide pendant 10 minutes.\n\nL'équipe Vrai Besoin"
 
@@ -103,15 +122,19 @@ def send_otp_email(email: str, otp_code: str):
 
 def get_user_active_charges_json(user) -> str:
     """
-    Extracts active recurring charges as an ultra-compact JSON string.
-    Optimized to minimize DB hydration overhead and token payload size for LLMs.
+    Exécute l'extraction des charges récurrentes actives de l'utilisateur sous forme de JSON optimisé.
+
+    Args:
+        user (CustomUser): L'instance de l'utilisateur.
+
+    Returns:
+        str: Une chaîne JSON compacte listant les charges actives de l'utilisateur.
     """
     cache_key = f"user_charges_json_{user.id}"
     cached_json = cache.get(cache_key)
     if cached_json:
         return cached_json
 
-    # Bypassing model instance creation entirely using .values() for speed
     active_blueprints = (
         RecurringChargeBlueprint.objects.filter(user=user, is_active=True)
         .order_by('due_day')
@@ -126,7 +149,6 @@ def get_user_active_charges_json(user) -> str:
             "type": "Fixed" if charge['is_fixed'] else "Variable"
         }
 
-        # Consolidating amount structural data based on model constraints
         if charge['is_fixed']:
             item["amt"] = float(charge['exact_amount']) if charge['exact_amount'] else 0.0
         else:
@@ -134,20 +156,23 @@ def get_user_active_charges_json(user) -> str:
 
         compact_charges.append(item)
 
-    # Returns a minimized JSON string ready for prompt injection
     result = json.dumps(compact_charges, ensure_ascii=False)
-    cache.set(cache_key, result, timeout=86400)  # Cache for 24h
+    cache.set(cache_key, result, timeout=86400)
     return result
 
 
 def extract_product_data_via_ai(image_file):
     """
-    Envoie l'image à l'IA pour extraire le nom, le prix et la catégorie.
+    Sollicite le modèle d'intelligence artificielle pour extraire les métadonnées d'un produit depuis une image.
+
+    Args:
+        image_file (UploadedFile or file-like object): L'image représentant le produit à analyser.
+
+    Returns:
+        dict: Un dictionnaire JSON contenant le nom, le prix et la catégorie extraits.
     """
-    # La clé API doit être stockée de manière sécurisée dans le .env
     client = genai.Client()
 
-    # Utilisation du modèle Flash, optimisé pour les tâches multimodales rapides
     model_name = 'gemini-3.1-flash-lite'
     img = Image.open(image_file)
     valid_categories = [choice.value for choice in ProductCategoryChoices]
@@ -163,24 +188,29 @@ def extract_product_data_via_ai(image_file):
 
 def generate_reflection_questions(purchase_id):
     """
-    Génère 3 questions de réflexion personnalisées via Gemini.
-    Exploite les dimensions d'Utilité et de Psychologie pour cibler les biais cognitifs.
+    Génère un ensemble de questions de réflexion ciblées en fonction de l'intention d'achat.
+
+    Args:
+        purchase_id (UUID): L'identifiant de l'intention d'achat ciblée.
+
+    Returns:
+        list[ReflectionQuestion]: La liste des objets ReflectionQuestion créés en base de données.
+
+    Raises:
+        Exception: Remonte toute exception survenant durant la génération ou la sauvegarde.
     """
     from api.models import PurchaseIntention, ReflectionQuestion
     try:
-        # 1. Récupération des données (Produit + Utilisateur)
         intention = PurchaseIntention.objects.select_related('user').get(id=purchase_id)
         user = intention.user
         charges_json_context = get_user_active_charges_json(user)
-        # Formatage booléen pour le prompt
         has_similar = "Oui" if intention.has_similar_item else "Non"
 
-        # 3. Construction du prompt contextuel (Ingénierie de prompt avancée)
         prompt = f"""
         Tu es un coach financier direct et bienveillant. Ton but : éviter les achats impulsifs en posant des questions très simples, compréhensibles par tous.
 
         [CONTEXTE DE L'ACHAT]
-        - Informations nécessaire du produit : {intention.product_name} ({intention.product_category}) | Prix : {intention.product_price}€
+        - Informations nécessaire du produit : {intention.product_name} ({intention.product_category}) | Prix : {intention.product_price}{user.preferred_currency}
         - Niveau d'évaluation : {user.evaluation_rigor}
         - Urgence : {intention.urgency_level}/5 | Déjà possédé : {has_similar} | Utilisation prévue : {intention.usage_frequency or 'Non précisée'}
         - Portefeuille choisie (Financement) : {intention.wallet_type}
@@ -206,7 +236,7 @@ def generate_reflection_questions(purchase_id):
         ]
         """
 
-        questions_data = generate_gemini_json_response(prompt)
+        questions_data = generate_gemini_json_response(prompt,model_name="gemini-3.5-flash")
         created_questions = []
         for item in questions_data[:3]:
             q = ReflectionQuestion.objects.create(
@@ -225,16 +255,26 @@ def generate_reflection_questions(purchase_id):
 
 def generate_ai_verdict(purchase_id):
     """
-    Service métier optimisé : génère un verdict IA anti-achat impulsif.
-    Intègre les données démographiques, contextuelles (IP/Device) et psychologiques.
+    Analyse l'intention d'achat et produit un verdict consultatif anti-impulsion.
+
+    Évalue le profil, les finances et le contexte pour recommander l'achat, la réflexion
+    ou l'abandon, tout en proposant d'éventuelles alternatives.
+
+    Args:
+        purchase_id (UUID): L'identifiant de l'intention d'achat.
+
+    Returns:
+        PurchaseIntention: L'instance de l'intention d'achat mise à jour avec le verdict.
+
+    Raises:
+        Exception: Remonte toute exception liée à l'interfaçage LLM ou la sauvegarde.
     """
     try:
-        # 1. Chargement optimisé des données
         intention = PurchaseIntention.objects.select_related('user').prefetch_related('questions').get(id=purchase_id)
         user = intention.user
         questions = intention.questions.all()
         charges_json_context = get_user_active_charges_json(user)
-        # 2. Enrichissement du contexte Utilisateur (Âge, Profession, Objectifs)
+
         age = "Non spécifié"
         if user.birth_date:
             age = f"{(timezone.now().date() - user.birth_date).days // 365} ans"
@@ -243,17 +283,13 @@ def generate_ai_verdict(purchase_id):
         socio_pro = ", ".join(
             user.socio_professional_categories) if user.socio_professional_categories else "Non spécifiée"
 
-
         currency = user.preferred_currency or "€"
         rigor = user.evaluation_rigor or "Équilibré"
 
-        # 3. Enrichissement du contexte Environnemental (IP, Temps, Device)
-        # On suppose que le middleware enrichit 'location_data' avec ces infos via l'IP et le User-Agent
         now = timezone.now().strftime("%Y-%m-%d %H:%M")
         city = user.location_data.get('city', 'Localisation inconnue')
-        device = user.location_data.get('device_type', 'Mobile/Inconnu')  # Ex: "iPhone", "Mac", "Android"
+        device = user.location_data.get('device_type', 'Mobile/Inconnu')
 
-        # 4. Historique récent (Formatage ultra-compact pour sauver des tokens)
         recent_history = PurchaseIntention.objects.filter(
             user=user, user_final_decision__isnull=False
         ).exclude(id=purchase_id).order_by('-created_at')[:5]
@@ -262,12 +298,10 @@ def generate_ai_verdict(purchase_id):
         if not history_text:
             history_text = "Aucun"
 
-        # 5. Formatage de l'interrogatoire (Q/R)
         qna_text = "\n".join([f"- {q.question_text} : {q.user_answer}" for q in questions])
 
         has_similar = "Oui" if intention.has_similar_item else "Non"
 
-        # 6. Prompt Engineering Optimisé (Format Instructif Strict)
         prompt = f"""Rôle : Coach financier anti-achat impulsif (Ton: direct, tutoiement, ferme).
 Objectif : Rendre un verdict JSON strict pour une intention d'achat.
 
@@ -301,22 +335,19 @@ Contexte temporel : Utilise l'heure ({now}) ou l'appareil ({device}) si cela tra
     "alternatives": "Suggestion courte (réparation, occasion, location) ou null."
 }}"""
 
-        # Appel à l'IA
-        result = generate_gemini_json_response(prompt)
+        result = generate_gemini_json_response(prompt,model_name="gemini-3.5-flash")
 
-        # 7. Post-traitement et Sauvegarde
         reasoning = result.get('explanation', '') or ''
         if result.get('alternatives'):
             reasoning += f"\n\nAlternative suggérée : {result.get('alternatives')}"
 
-        intention.ai_verdict = result.get('verdict', 'CALM').strip()[:10]  # Fallback sur CALM par sécurité
+        intention.ai_verdict = result.get('verdict', 'CALM').strip()[:10]
         intention.ai_reasoning = reasoning.strip()
         intention.save()
 
         return intention
 
     except Exception as e:
-        # Recommandation : importer traceback pour débugger plus facilement
         import traceback
         traceback.print_exc()
         log_app_error(e, context_message="Erreur generate_ai_verdict", user=user if 'user' in locals() else None)
@@ -324,7 +355,17 @@ Contexte temporel : Utilise l'heure ({now}) ou l'appareil ({device}) si cela tra
 
 
 def generate_gemini_json_response(prompt, image_file=None, model_name='gemini-2.5-flash'):
-    """Utilité pour appeler Gemini API  et nettoyer le output JSON."""
+    """
+    Exécute une requête vers le modèle d'intelligence artificielle Gemini en forçant une sortie JSON.
+
+    Args:
+        prompt (str): L'invite textuelle définissant le contexte et la requête.
+        image_file (UploadedFile or None, optional): Fichier image optionnel. Defaults to None.
+        model_name (str, optional): Modèle Gemini ciblé. Defaults to 'gemini-2.5-flash'.
+
+    Returns:
+        dict: Le dictionnaire JSON contenant la réponse du modèle.
+    """
     client = genai.Client()
     contents = [prompt, image_file] if image_file else prompt
 
@@ -340,7 +381,19 @@ def generate_gemini_json_response(prompt, image_file=None, model_name='gemini-2.
 
 
 def log_app_error(exception, context_message="", user=None, endpoint_url=None, level=ErrorLog.LogLevels.ERROR):
-    """Utility to standardize error logging across the app."""
+    """
+    Standardise et persiste l'enregistrement d'une erreur applicative en base de données.
+
+    Args:
+        exception (Exception): L'exception source capturée.
+        context_message (str, optional): Message de contexte supplémentaire. Defaults to "".
+        user (CustomUser, optional): Utilisateur concerné, le cas échéant. Defaults to None.
+        endpoint_url (str, optional): URL associée à l'erreur. Defaults to None.
+        level (str, optional): Niveau de criticité de l'erreur. Defaults to ErrorLog.LogLevels.ERROR.
+
+    Returns:
+        None
+    """
     error_message = f"{context_message}: {str(exception)}" if context_message else str(exception)
     ErrorLog.objects.create(
         level=level,
@@ -352,18 +405,22 @@ def log_app_error(exception, context_message="", user=None, endpoint_url=None, l
 
 def fetch_and_cache_daily_advice(user_id, execute_now=False):
     """
-    Génère un message de motivation court en arrière-plan via l'API Gemini au moment du login.
-    Met en cache le résultat pour le dashboard.
+    Génère et stocke en cache un conseil ou encouragement quotidien personnalisé pour l'utilisateur.
+
+    Args:
+        user_id (int): L'identifiant de l'utilisateur.
+        execute_now (bool, optional): Force l'exécution synchrone sans recourir à Celery. Defaults to False.
+
+    Returns:
+        None
     """
     import datetime
     today = datetime.date.today().isoformat()
     cache_key = f"coach_message_{user_id}_{today}"
 
-    # Vérification si le cache existe déjà (Hit très rapide sur Upstash Redis)
     if cache.get(cache_key):
         return
 
-    # Délégation à Celery (qui utilise Upstash Redis) pour éviter la latence
     if not execute_now:
         from api.tasks import fetch_and_cache_daily_advice_task
         fetch_and_cache_daily_advice_task.delay(user_id)
@@ -376,7 +433,6 @@ def fetch_and_cache_daily_advice(user_id, execute_now=False):
         user = CustomUser.objects.get(id=user_id)
         now = timezone.now()
 
-        # Obtenir les stats basiques pour l'IA
         base_qs = PurchaseIntention.objects.filter(user=user)
         if user.history_cleared_at:
             base_qs = base_qs.filter(created_at__gte=user.history_cleared_at)
@@ -425,12 +481,11 @@ def fetch_and_cache_daily_advice(user_id, execute_now=False):
 
         client = genai.Client()
         response = client.models.generate_content(
-            model='gemini-3.5-flash',
+            model='gemini-2.5-flash',
             contents=prompt,
         )
         message = response.text.strip()
 
-        # Mise en cache pour 24 heures (86400 secondes)
         cache.set(cache_key, message, timeout=86400)
     except Exception as e:
         log_app_error(e, context_message=f"Erreur génération dynamic coach message pour l'utilisateur {user_id}")
@@ -438,24 +493,50 @@ def fetch_and_cache_daily_advice(user_id, execute_now=False):
 
 def check_purchase_coherence(product_name, product_category, product_price, preferred_currency):
     """
-    Vérifie la cohérence d'une intention d'achat via l'IA.
-    Renvoie un dictionnaire avec 'is_coherent' et 'reason'.
+    Exécute une vérification contextuelle pour détecter les saisies incohérentes 
+    d'une intention d'achat.
+
+    Args:
+        product_name (str): Le nom du produit souhaité.
+        product_category (str): La catégorie déclarée pour ce produit.
+        product_price (float or Decimal): Le prix du produit.
+        preferred_currency (str): La devise de tarification.
+
+    Returns:
+        dict: Un dictionnaire contenant les clés 'is_coherent' (booléen) et 'reason' (explication texte).
     """
-    prompt = f"""
-    Vérifie la cohérence de cette intention d'achat :
-    Nom : "{product_name}"
-    Catégorie : "{product_category}"
-    Prix : {product_price} {preferred_currency}
-    
-    Est-ce que ces trois éléments sont logiquement cohérents ensemble dans la réalité ? 
-    Réponds STRICTEMENT par un JSON : {{"is_coherent": true/false, "reason": "explication brève"}}
+    prompt = prompt = f"""
+    Tu es un expert en évaluation de données pour une application de finances personnelles. 
+    Ton rôle est d'identifier les erreurs de saisie, les fautes de frappe ou les incohérences flagrantes dans les intentions d'achat des utilisateurs.
+    Analyse l'intention d'achat suivante :
+    - Nom du produit : "{product_name}"
+    - Catégorie : "{product_category}"
+    - Prix saisi : {product_price} {preferred_currency}
+    Évalue la cohérence globale selon ces deux critères stricts :
+    1. Pertinence de la catégorie : La catégorie "{product_category}" correspond-elle logiquement à la nature du produit "{product_name}" ?
+    2. Ordre de grandeur du prix : Le prix de {product_price} {preferred_currency} est-il réaliste sur le marché actuel ? (Prends en compte le marché de l'occasion et les promotions, mais rejette les aberrations manifestes comme un smartphone récent à 10% de sa valeur réelle ou un article de tous les jours à un prix exorbitant).
+
+    Fournis ta réponse STRICTEMENT au format JSON exact suivant, sans aucun formatage Markdown ni texte avant ou après :
+    {{
+        "reason": "Analyse d'abord le prix par rapport au marché et la pertinence de la catégorie en une phrase concise.",
+        "is_coherent": true ou false
+    }}
     """
-    return generate_gemini_json_response(prompt)
+    return generate_gemini_json_response(prompt,model_name="gemini-3.1-flash-lite")
 
 
 def process_income_payment(income):
     """
-    Traite un flux de revenu (met à jour le solde, crée la transaction et calcule la prochaine échéance).
+    Exécute le traitement d'encaissement et de mise à jour pour un flux de revenus donné.
+
+    Met à jour le solde utilisateur, enregistre la transaction historique et décale 
+    automatiquement la date d'échéance selon la périodicité du revenu.
+
+    Args:
+        income (IncomeStream): L'instance du flux de revenus à traiter.
+
+    Returns:
+        None
     """
     from django.db import transaction
     from api.models import TransactionHistory
@@ -465,16 +546,13 @@ def process_income_payment(income):
 
     today = timezone.now().date()
 
-    # Tant que le revenu est actif et que la date est arrivée/dépassée
     while income.is_active and (income.next_payment_date is None or income.next_payment_date <= today):
         with transaction.atomic():
             user = income.user
 
-            # 1. Mise à jour du solde
             user.current_balance += income.amount
             user.save(update_fields=['current_balance'])
 
-            # 2. Historisation de la transaction
             TransactionHistory.objects.create(
                 user=user,
                 amount=income.amount,
@@ -482,7 +560,6 @@ def process_income_payment(income):
                 description=f"Revenu perçu : {income.name}"
             )
 
-            # 3. Calcul de la prochaine date selon la fréquence
             if income.frequency == 'ONE_TIME':
                 income.is_active = False
             elif income.frequency == 'DAILY':

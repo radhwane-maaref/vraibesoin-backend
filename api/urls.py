@@ -1,6 +1,14 @@
-# api/urls.py
+"""
+Configuration du routage des API pour l'application.
+
+Ce module définit les points de terminaison (endpoints) accessibles,
+en associant les chemins URL aux vues correspondantes. Il intègre à la fois
+des vues génériques basées sur des classes (CBV) et un routeur REST Framework
+pour la gestion standardisée des ressources.
+"""
+
 from django.urls import path, include
-from rest_framework.routers import DefaultRouter  # 1. Import DefaultRouter
+from rest_framework.routers import DefaultRouter
 
 from .views import (
     RegisterView,
@@ -8,26 +16,24 @@ from .views import (
     GoogleLoginView,
     PasswordResetRequestAPIView,
     PasswordResetConfirmAPIView,
-
     UserProfileView, ExtractProductInfoView, PurchaseIntentionCreateView, GenerateQuestionsView, GenerateVerdictView,
     UserFinalDecisionView, DashboardSummaryView, AppFeedbackCreateView, PurchaseHistoryView, AdminFeedbackListView,
     PurchaseIntentionDetailView, StatsDashboardAPIView, AdminGlobalStatsView, AdminSystemHealthView,
     AdminUserManagementView, CategoryListView, ClearHistoryView, AdminCategoryStatsView, OnboardingChoicesView,
     SubmitOnboardingView, RequestOTPView, health_check,
-
-    # 2. Import the new ViewSets
     IncomeStreamViewSet,
     TransactionHistoryViewSet, ProcessIncomesCronView, FixedChargeViewSet, BudgetEnvelopeViewSet
 )
 from rest_framework_simplejwt.views import TokenRefreshView
+
 
 router = DefaultRouter()
 router.register(r'incomes', IncomeStreamViewSet, basename='income')
 router.register(r'transactions', TransactionHistoryViewSet, basename='transaction')
 router.register(r'fixed-charges', FixedChargeViewSet, basename='fixed-charge')
 router.register(r'envelopes', BudgetEnvelopeViewSet, basename='envelope')
+
 urlpatterns = [
-    # 4. Include the router URLs
     path('', include(router.urls)),
 
     path('auth/register/', RegisterView.as_view(), name='register'),

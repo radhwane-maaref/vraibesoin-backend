@@ -1,3 +1,12 @@
+"""
+Gestionnaire d'exceptions et exceptions personnalisées pour l'API.
+
+Ce module définit les exceptions métier spécifiques et surcharge le gestionnaire
+d'exceptions par défaut de Django REST Framework pour assurer une journalisation
+systématique des erreurs en base de données, ainsi que la standardisation des
+réponses HTTP renvoyées au client.
+"""
+
 import traceback
 import logging
 from django.core.exceptions import (
@@ -24,12 +33,22 @@ logger = logging.getLogger('api.exceptions')
 
 
 class DatabaseConflictException(APIException):
+    """
+    Exception levée lors d'un conflit d'intégrité au niveau de la base de données.
+    
+    Retourne une réponse HTTP 409 (Conflict).
+    """
     status_code = status.HTTP_409_CONFLICT
     default_detail = "Un conflit avec les données existantes est survenu."
     default_code = 'db_conflict'
 
 
 class ServiceUnavailableException(APIException):
+    """
+    Exception levée lorsque le service est temporairement incapable de traiter la requête.
+    
+    Retourne une réponse HTTP 503 (Service Unavailable).
+    """
     status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     default_detail = "Le service est temporairement indisponible. Veuillez réessayer plus tard."
     default_code = 'service_unavailable'
@@ -37,12 +56,22 @@ class ServiceUnavailableException(APIException):
 
 def custom_exception_handler(exc, context):
     """
-    Gestionnaire d'exceptions personnalisé global pour l'application.
-    Intercepte les erreurs courantes (validation Django, existence, conflits DB, etc.)
-    et les formate proprement pour l'API, tout en assurant un logging résilient.
-    """
+    Gestionnaire d'exceptions personnalisé global pour l'application REST Framework.
 
-    # --- 1. Prétraitement et traduction des exceptions Django en exceptions DRF ---
+    Intercepte les erreurs (validation Django, non-existence, conflits DB, opérations
+    suspectes) pour les traduire en exceptions DRF formatées. Enregistre également
+    chaque exception dans le modèle ErrorLog pour un suivi d'audit, avant de renvoyer
+    la réponse standardisée au client.
+
+    Args:
+        exc (Exception): L'exception levée au cours du traitement de la requête.
+        context (dict): Le dictionnaire de contexte fourni par REST Framework, 
+                        incluant la requête ('request') et la vue concernée ('view').
+
+    Returns:
+        Response: L'objet Response formaté pour le client, ou None si l'exception
+                  n'a pu être gérée par DRF (ce qui aboutira à une erreur 500 par Django).
+    """
     try:
         if isinstance(exc, DjangoValidationError):
             non_field_errors_key = api_settings.NON_FIELD_ERRORS_KEY
@@ -66,7 +95,6 @@ def custom_exception_handler(exc, context):
             exc = DRFNotFound(detail="La ressource demandée est introuvable.")
 
         elif isinstance(exc, IntegrityError):
-            # Violation de contrainte unique, clé étrangère, etc.
             exc_str = str(exc).lower()
             if 'unique' in exc_str or 'duplicate' in exc_str or 'déjà existe' in exc_str or 'dÃ©jÃ  existe' in exc_str:
                 detail = "Une ressource avec ces données existe déjà."
@@ -79,32 +107,25 @@ def custom_exception_handler(exc, context):
             exc = DatabaseConflictException(detail=detail)
 
         elif isinstance(exc, OperationalError):
-            # Erreur de connexion/disponibilité de la base de données
             exc = ServiceUnavailableException(detail="Le service de base de données est temporairement indisponible.")
 
         elif isinstance(exc, SuspiciousOperation):
-            # Requête suspecte (ex: en-tête Host invalide, etc.)
             exc = DRFValidationError(detail="Requête invalide ou suspecte.")
 
     except Exception as preprocessing_exc:
-        # En cas d'erreur lors du prétraitement, on logue et on continue avec l'exception d'origine
         logger.error(f"Erreur lors du prétraitement de l'exception : {preprocessing_exc}")
 
-    # --- 2. Exécution du gestionnaire par défaut de DRF ---
     response = exception_handler(exc, context)
 
-    # Extraction des infos de contexte
     request = context.get('request')
     endpoint_url = None
     if request and hasattr(request, 'path'):
         endpoint_url = request.path[:255]
 
-    # Extraction sécurisée de la méthode HTTP
     http_method = None
     if request and hasattr(request, 'method') and request.method in ErrorLog.HttpMethodChoices.values:
         http_method = request.method
 
-    # Extraction sécurisée de l'utilisateur
     user = None
     try:
         if request and hasattr(request, 'user') and request.user and not request.user.is_anonymous:
@@ -112,7 +133,6 @@ def custom_exception_handler(exc, context):
     except Exception:
         pass
 
-    # Capture de la stack trace
     stack_trace = None
     if exc and hasattr(exc, '__traceback__') and exc.__traceback__:
         try:
@@ -125,9 +145,7 @@ def custom_exception_handler(exc, context):
         except Exception:
             stack_trace = "Stack trace non disponible"
 
-    # --- 3. Détermination de la sévérité et du message de réponse ---
     if response is not None:
-        # Erreur côté client (4xx) ou exception API gérée
         status_code = response.status_code
         error_message = f"[{status_code}] {str(response.data)[:1000]}"
 
@@ -138,19 +156,16 @@ def custom_exception_handler(exc, context):
             level = ErrorLog.LogLevels.WARNING
             priority = ErrorLog.LogPriority.LOW
     else:
-        # Erreur interne non gérée (Crash 500)
         status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         error_message = f"{exc.__class__.__name__}: {str(exc)[:1000]}"
         level = ErrorLog.LogLevels.CRITICAL
         priority = ErrorLog.LogPriority.CRITICAL
 
-        # Réponse générique pour éviter les fuites d'informations
         response = Response(
             {"detail": "Une erreur interne du serveur est survenue."},
             status=status_code
         )
 
-    # --- 4. Enregistrement résilient dans la base de données ---
     try:
         ErrorLog.objects.create(
             level=level,
@@ -163,10 +178,10 @@ def custom_exception_handler(exc, context):
             stack_trace=stack_trace
         )
     except Exception as db_exc:
-        # Fallback sur le logging Python standard si la base de données est inaccessible (ex: OperationalError)
+        # Fallback de journalisation en cas d'indisponibilité de la base de données
         logger.critical(
             f"Impossible d'enregistrer le log d'erreur en base de données. Erreur DB: {db_exc} | "
             f"Erreur d'origine: level={level}, message={error_message}, endpoint={endpoint_url}, method={http_method}"
         )
 
-    return response
+    return response
