@@ -404,6 +404,51 @@ class BudgetEnvelopeViewSet(viewsets.ModelViewSet):
                     category=envelope.category or "Enveloppe"
                 )
 
+    @action(detail=True, methods=['post'], url_path='terminate')
+    def terminate(self, request, pk=None):
+        """
+        Termine une enveloppe budgétaire :
+        - Vérifie que total_spent > 0
+        - Calcule le reste (montant_alloué - total_dépensé)
+        - Restitue le reste au solde principal
+        - Met end_date à hier pour que le statut calculé devienne "ended" (Terminé)
+        """
+        with transaction.atomic():
+            envelope = BudgetEnvelope.objects.select_for_update().get(pk=pk, user=request.user)
+
+            if envelope.total_spent <= 0:
+                return Response(
+                    {"error": _("Impossible de terminer une enveloppe sans dépenses.")},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            remainder = envelope.amount - envelope.total_spent
+
+            # Restituer le reste au solde principal
+            if remainder > 0:
+                user = CustomUser.objects.select_for_update().get(pk=request.user.pk)
+                user.current_balance += remainder
+                user.save(update_fields=['current_balance'])
+
+                TransactionHistory.objects.create(
+                    user=user,
+                    amount=remainder,
+                    transaction_type=TransactionHistory.TransactionType.INCOME,
+                    description=f"Clôture enveloppe « {envelope.name} » — restitution du solde restant",
+                    category=envelope.category or "Enveloppe"
+                )
+
+            # Forcer le statut "ended" en antidatant la date de fin
+            envelope.end_date = (timezone.now() - timedelta(days=1)).date()
+            envelope.save(update_fields=['end_date'])
+
+            cache.delete(f"dashboard_summary_{request.user.id}")
+
+            return Response({
+                "message": _("Enveloppe terminée avec succès."),
+                "remainder_refunded": float(remainder),
+            }, status=status.HTTP_200_OK)
+
     def perform_update(self, serializer):
         with transaction.atomic():
             # 1. Récupérer l'état de l'enveloppe AVANT la mise à jour
@@ -757,14 +802,20 @@ class UserFinalDecisionView(APIView):
                             envelope = BudgetEnvelope.objects.select_for_update().get(id=env_id, user=user)
 
                             # Overdraft Protection
-                            if envelope.amount < price:
+                            if (envelope.amount - envelope.total_spent) < price:
                                 return Response(
                                     {"error": _("Fonds insuffisants dans cette enveloppe budgétaire.")},
                                     status=status.HTTP_400_BAD_REQUEST
                                 )
 
-                            envelope.amount -= price
-                            envelope.save(update_fields=['amount'])
+                            envelope.total_spent += price
+                            envelope.save(update_fields=['total_spent'])
+
+                            # Deduct from user's main balance as well since the money is effectively spent
+                            user_locked = CustomUser.objects.select_for_update().get(pk=user.pk)
+                            user_locked.current_balance -= price
+                            user_locked.save(update_fields=['current_balance'])
+
                             desc = f"Achat (Env. {envelope.name}) : {intention.product_name}"
 
                         except BudgetEnvelope.DoesNotExist:

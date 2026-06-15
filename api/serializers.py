@@ -718,31 +718,10 @@ class FinalDecisionUpdateSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         """
-        Met à jour l'intention d'achat et déduit le solde en cas d'achat.
+        Met à jour l'intention d'achat.
+        La déduction financière est gérée exclusivement par UserFinalDecisionView
+        qui utilise select_for_update() pour la sécurité transactionnelle.
         """
-        new_decision = validated_data.get('user_final_decision')
-        old_decision = instance.user_final_decision
-
-        if new_decision == PurchaseIntention.DecisionChoices.BUY and old_decision != PurchaseIntention.DecisionChoices.BUY:
-            user = instance.user
-            price = instance.product_price
-            wallet_type = instance.wallet_type
-            
-            if wallet_type.startswith('env_'):
-                try:
-                    env_id = wallet_type.split('_')[1]
-                    envelope = BudgetEnvelope.objects.get(id=env_id, user=user)
-                    envelope.total_spent += price
-                    envelope.save(update_fields=['total_spent'])
-                    
-                    user.current_balance -= price
-                    user.save(update_fields=['current_balance'])
-                except BudgetEnvelope.DoesNotExist:
-                    pass
-            elif wallet_type == 'main':
-                user.current_balance -= price
-                user.save(update_fields=['current_balance'])
-
         return super().update(instance, validated_data)
 
 
