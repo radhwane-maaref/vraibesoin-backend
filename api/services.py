@@ -122,13 +122,8 @@ def send_otp_email(email: str, otp_code: str):
 
 def get_user_active_charges_json(user) -> str:
     """
-    Exécute l'extraction des charges récurrentes actives de l'utilisateur sous forme de JSON optimisé.
-
-    Args:
-        user (CustomUser): L'instance de l'utilisateur.
-
-    Returns:
-        str: Une chaîne JSON compacte listant les charges actives de l'utilisateur.
+    Exécute l'extraction des charges récurrentes actives de l'utilisateur sous
+    forme de JSON optimisé avec agrégations pour l'analyse IA.
     """
     cache_key = f"user_charges_json_{user.id}"
     cached_json = cache.get(cache_key)
@@ -142,6 +137,10 @@ def get_user_active_charges_json(user) -> str:
     )
 
     compact_charges = []
+    total_fixed = 0.0
+    total_var_min = 0.0
+    total_var_max = 0.0
+
     for charge in active_blueprints:
         item = {
             "name": charge['name'],
@@ -150,13 +149,28 @@ def get_user_active_charges_json(user) -> str:
         }
 
         if charge['is_fixed']:
-            item["amt"] = float(charge['exact_amount']) if charge['exact_amount'] else 0.0
+            amt = float(charge['exact_amount']) if charge['exact_amount'] else 0.0
+            item["amt"] = amt
+            total_fixed += amt
         else:
-            item["range"] = f"{float(charge['min_amount'])}-{float(charge['max_amount'])}"
+            c_min = float(charge['min_amount']) if charge['min_amount'] else 0.0
+            c_max = float(charge['max_amount']) if charge['max_amount'] else 0.0
+            item["range"] = f"{c_min}-{c_max}"
+            total_var_min += c_min
+            total_var_max += c_max
 
         compact_charges.append(item)
 
-    result = json.dumps(compact_charges, ensure_ascii=False)
+    # Wrap the details with a calculated high-level context block
+    payload = {
+        "summary": {
+            "total_fixed_monthly": round(total_fixed, 2),
+            "estimated_variable_range": f"{round(total_var_min, 2)}-{round(total_var_max, 2)}"
+        },
+        "items": compact_charges
+    }
+
+    result = json.dumps(payload, ensure_ascii=False)
     cache.set(cache_key, result, timeout=86400)
     return result
 
@@ -187,66 +201,89 @@ def extract_product_data_via_ai(image_file):
 
 
 def generate_reflection_questions(purchase_id):
-    """
-    Génère un ensemble de questions de réflexion ciblées en fonction de l'intention d'achat.
-
-    Args:
-        purchase_id (UUID): L'identifiant de l'intention d'achat ciblée.
-
-    Returns:
-        list[ReflectionQuestion]: La liste des objets ReflectionQuestion créés en base de données.
-
-    Raises:
-        Exception: Remonte toute exception survenant durant la génération ou la sauvegarde.
-    """
     from api.models import PurchaseIntention, ReflectionQuestion
     try:
         intention = PurchaseIntention.objects.select_related('user').get(id=purchase_id)
         user = intention.user
-        charges_json_context = get_user_active_charges_json(user)
         has_similar = "Oui" if intention.has_similar_item else "Non"
 
+        # Explicitly map behavioral rigor to guide the coach's psychology
+        rigor_guidelines = {
+            "souple": "Bienveillant, focus sur l'alternative et l'empathie.",
+            "modéré": "Équilibré, pose des questions sur l'utilité réelle.",
+            "strict": "Direct, sans filtre, confronte l'utilisateur à ses contradictions."
+        }
+        current_rigor = rigor_guidelines.get(str(user.evaluation_rigor).lower(), "modéré")
+
+        # 1. System Instruction: Dynamic persona definition
+        system_instruction = (
+            "Tu es un coach financier de poche, expert en psychologie comportementale et neuro-marketing. "
+            "Ton but est de stopper les achats impulsifs. Ton style est incisif, percutant et minimaliste. "
+            "Tu tutoies l'utilisateur. "
+            f"Directives de comportement : {current_rigor}"
+        )
+
+        # 2. Prompt: Token-optimized context without wasteful fluff
         prompt = f"""
-        Tu es un coach financier direct et bienveillant. Ton but : éviter les achats impulsifs en posant des questions très simples, compréhensibles par tous.
+        Analyse cette intention d'achat et génère exactement 3 questions de réflexion.
 
-        [CONTEXTE DE L'ACHAT]
-        - Informations nécessaire du produit : {intention.product_name} ({intention.product_category}) | Prix : {intention.product_price}{user.preferred_currency}
-        - Niveau d'évaluation : {user.evaluation_rigor}
-        - Urgence : {intention.urgency_level}/5 | Déjà possédé : {has_similar} | Utilisation prévue : {intention.usage_frequency or 'Non précisée'}
-        - Portefeuille choisie (Financement) : {intention.wallet_type}
-        - Categories socio-professionels : {user.socio_professional_categories}
-        - Dernière adresse IP de l'utilisateur : {user.last_ip_address}
-        - Date de naissance : {user.birth_date}
-        - Devise preferé : {user.preferred_currency}
-        - CHARGES RÉCURRENTES MENSUELLES DU PROFIL: {charges_json_context}
+        [DONNÉES UTILISATEUR]
+        - Produit : {intention.product_name}
+        - Prix : {intention.product_price} {user.preferred_currency}
+        - Urgence : {intention.urgency_level}/5
+        - Possède déjà un équivalent : {has_similar}
+        - Fréquence d'utilisation prévue : {intention.usage_frequency or 'Non spécifiée'}
 
-        [CONSIGNES STRICTES - FORMAT ET STYLE]
-        1. QUANTITÉ : Génère EXACTEMENT 3 questions. Pas une de plus.
-        2. LONGUEUR : Questions  courtes (MAX 150 caractères). Va droit au but.
-        3. OPTIONS : EXACTEMENT 3 options de réponse par question, courtes (MAX 80 caractères).
-        4. VOCABULAIRE : Utilise des mots du quotidien. Aucun jargon.
-        5. PERTINENCE : Cible le point faible selon le contexte (ex: si l'urgence est forte -> confronte l'émotion ; s'il possède déjà l'objet -> pourquoi changer ? ; si le budget est serré -> rappelle l'objectif).
+        [RÈGLES DE SÉLECTION]
+        - Si Urgence >= 4 : Questionne l'immédiateté (Pourquoi maintenant ?).
+        - Si Équivalent == 'Oui' : Confronte sur la redondance (Pourquoi un doublon ?).
+        - Si Prix élevé : Demande quel arbitrage financier ou sacrifice cela implique.
 
-        RÈGLE ABSOLUE : Renvoie UNIQUEMENT un tableau JSON valide. Aucun texte avant, aucun texte après.
-        [
-          {{
-            "question": "Question courte ici ?",
-            "options": ["Choix 1", "Choix 2", "Choix 3"]
-          }}
-        ]
+        Génère 3 questions adaptées à ces règles. Pas d'introduction, pas de conclusion.
         """
 
-        questions_data = generate_gemini_json_response(prompt,model_name="gemini-3.5-flash")
-        created_questions = []
-        for item in questions_data[:3]:
-            q = ReflectionQuestion.objects.create(
+        # 3. Schema: Strict token constraints
+        schema = {
+            "type": "ARRAY",
+            "minItems": 3,
+            "maxItems": 3,
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "question": {
+                        "type": "STRING",
+                        "description": "Question percutante, max 20 mots. Doit directement utiliser les données utilisateur."
+                    },
+                    "options": {
+                        "type": "ARRAY",
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "items": {"type": "STRING"},
+                        "description": "3 réponses types de l'utilisateur (ex: 'Oui, totalement', 'Honnêtement non', 'Je peux attendre'). Max 8 mots par option."
+                    }
+                },
+                "required": ["question", "options"]
+            }
+        }
+
+        questions_data = generate_gemini_json_response(
+            prompt,
+            model_name="gemini-3.5-flash",
+            response_schema=schema,
+            system_instruction=system_instruction
+        )
+
+        # Optimization: Use bulk_create to save 2 database roundtrips
+        questions_to_create = [
+            ReflectionQuestion(
                 purchase_intention=intention,
                 question_text=item.get("question"),
                 ai_options=item.get("options", [])
             )
-            created_questions.append(q)
+            for item in questions_data[:3]
+        ]
 
-        return created_questions
+        return ReflectionQuestion.objects.bulk_create(questions_to_create)
 
     except Exception as e:
         log_app_error(e, context_message="Erreur génération questions", user=user if 'user' in locals() else None)
@@ -254,130 +291,126 @@ def generate_reflection_questions(purchase_id):
 
 
 def generate_ai_verdict(purchase_id):
-    """
-    Analyse l'intention d'achat et produit un verdict consultatif anti-impulsion.
-
-    Évalue le profil, les finances et le contexte pour recommander l'achat, la réflexion
-    ou l'abandon, tout en proposant d'éventuelles alternatives.
-
-    Args:
-        purchase_id (UUID): L'identifiant de l'intention d'achat.
-
-    Returns:
-        PurchaseIntention: L'instance de l'intention d'achat mise à jour avec le verdict.
-
-    Raises:
-        Exception: Remonte toute exception liée à l'interfaçage LLM ou la sauvegarde.
-    """
     try:
         intention = PurchaseIntention.objects.select_related('user').prefetch_related('questions').get(id=purchase_id)
         user = intention.user
         questions = intention.questions.all()
+
+        # Leverages your newly optimized pre-aggregated Redis/JSON utility
         charges_json_context = get_user_active_charges_json(user)
 
-        age = "Non spécifié"
-        if user.birth_date:
-            age = f"{(timezone.now().date() - user.birth_date).days // 365} ans"
-
+        qna_text = "\n".join([f"- Q: {q.question_text}\n  R: {q.user_answer}" for q in questions])
         goals = ", ".join(user.financial_goals) if user.financial_goals else "Épargne générale"
-        socio_pro = ", ".join(
-            user.socio_professional_categories) if user.socio_professional_categories else "Non spécifiée"
 
-        currency = user.preferred_currency or "€"
-        rigor = user.evaluation_rigor or "Équilibré"
+        # 1. High-impact behavioral persona
+        system_instruction = (
+            "Tu es un coach financier expérimental, expert en psychologie comportementale. "
+            "Ton but est de briser le cycle de l'achat impulsif et du neuro-marketing. "
+            "Ton ton est ultra-direct, incisif, analytique mais profondément bienveillant. Tu tutoies l'utilisateur. "
+            "Bannis les structures de phrases stéréotypées d'IA (ex: 'En tant que coach...', 'Il est important de...'). "
+            "Va droit au but, comme un humain authentique."
+        )
 
-        now = timezone.now().strftime("%Y-%m-%d %H:%M")
-        city = user.location_data.get('city', 'Localisation inconnue')
-        device = user.location_data.get('device_type', 'Mobile/Inconnu')
+        # 2. Contextually balanced prompt mapping financial space vs. mental space
+        prompt = f"""
+        Arbitre cette intention d'achat en croisant la réalité des chiffres avec la sincérité psychologique de l'utilisateur.
 
-        recent_history = PurchaseIntention.objects.filter(
-            user=user, user_final_decision__isnull=False
-        ).exclude(id=purchase_id).order_by('-created_at')[:5]
+        [PROFIL FINANCIER DE L'UTILISATEUR]
+        - Objectifs prioritaires : {goals}
+        - Charges mensuelles (Données brutes + Totaux calculés dans la clé 'summary') : {charges_json_context}
 
-        history_text = ", ".join([f"{item.product_name}({item.user_final_decision})" for item in recent_history])
-        if not history_text:
-            history_text = "Aucun"
+        [L'INTENTION D'ACHAT]
+        - Produit cible : {intention.product_name}
+        - Coût de l'impulsion : {intention.product_price} {user.preferred_currency}
 
-        qna_text = "\n".join([f"- {q.question_text} : {q.user_answer}" for q in questions])
+        [CONVERSATION D'AUTO-ÉVALUATION]
+        {qna_text}
 
-        has_similar = "Oui" if intention.has_similar_item else "Non"
+        [MATRICE DE DÉCISION DU COACH]
+        - Choisis 'BUY' si l'achat est mature, aligné aux objectifs et budgétairement indolore.
+        - Choisis 'CALM' si l'utilisateur rationalise une impulsion, montre un pic émotionnel ou une hésitation flagrante.
+        - Choisis 'ABANDON' si le produit entre en conflit direct avec ses objectifs prioritaires ou ses charges fixes de sécurité.
+        """
 
-        prompt = f"""Rôle : Coach financier anti-achat impulsif (Ton: direct, tutoiement, ferme).
-Objectif : Rendre un verdict JSON strict pour une intention d'achat.
+        # 3. Micro-optimized token schema
+        schema = {
+            "type": "OBJECT",
+            "properties": {
+                "verdict": {
+                    "type": "STRING",
+                    "enum": ["BUY", "CALM", "ABANDON"]
+                },
+                "explanation": {
+                    "type": "STRING",
+                    "description": "Analyse psychologique et financière incisive à la première personne ('Je'). Souligne les contradictions directes entre ses réponses et son budget. Max 50 mots."
+                },
+                "alternatives": {
+                    "type": "STRING",
+                    "nullable": True,
+                    "description": "Une alternative comportementale concrète contre la frustration (ex: règle des 72h, friperie, louer) ou null si le verdict est BUY. Max 15 mots."
+                }
+            },
+            "required": ["verdict", "explanation", "alternatives"]
+        }
 
-# CONTEXTE UTILISATEUR
-- Age : {age}
-- Portefeuille choisie (Financement) : {intention.wallet_type}
-- objectif financier : {goals}
-- Environnement : {city}, {now}, Appareil : {device}
-- Rigueur d'évaluation : {rigor}
-- Historique récent : {history_text}
-- Categories socio-professionels : {user.socio_professional_categories}
-- Devise preferé : {user.preferred_currency}
-- CHARGES RÉCURRENTES MENSUELLES DU PROFIL: {charges_json_context}
-# ANALYSE DU PRODUIT
-- Achat : {intention.product_name} ({intention.product_category})
-- Prix : {intention.product_price} {currency}
-- Fréquence prévue : {intention.usage_frequency or 'Non spécifiée'}
-- Possède déjà un équivalent : {has_similar}
-- Urgence psychologique : {intention.urgency_level or 3}/5
+        # Querying the high-speed flash model execution layer
+        result = generate_gemini_json_response(
+            prompt,
+            model_name="gemini-3.5-flash",
+            response_schema=schema,
+            system_instruction=system_instruction
+        )
 
-# RÉPONSES UTILISATEUR
-{qna_text}
+        verdict_status = result.get('verdict', 'CALM')
+        reasoning = result.get('explanation', '').strip()
+        alternative_sugg = result.get('alternatives')
 
-# RÈGLES DE DÉCISION
-Contexte temporel : Utilise l'heure ({now}) ou l'appareil ({device}) si cela trahit un achat compulsif (ex: achat tard la nuit sur mobile).
+        # Combine text values seamlessly if an alternative exists
+        if alternative_sugg and verdict_status != "BUY":
+            reasoning += f"\n\n💡 Alternative du coach : {alternative_sugg.strip()}"
 
-# FORMAT DE SORTIE (JSON UNIQUEMENT)
-{{
-    "verdict": "BUY" | "CALM" | "ABANDON",
-    "explanation": "Argumentaire de 3 phrases max. Confronte l'utilisateur avec ses propres réponses.",
-    "alternatives": "Suggestion courte (réparation, occasion, location) ou null."
-}}"""
-
-        result = generate_gemini_json_response(prompt,model_name="gemini-3.5-flash")
-
-        reasoning = result.get('explanation', '') or ''
-        if result.get('alternatives'):
-            reasoning += f"\n\nAlternative suggérée : {result.get('alternatives')}"
-
-        intention.ai_verdict = result.get('verdict', 'CALM').strip()[:10]
-        intention.ai_reasoning = reasoning.strip()
+        # Direct instance state assignment
+        intention.ai_verdict = verdict_status
+        intention.ai_reasoning = reasoning
         intention.save()
 
         return intention
 
     except Exception as e:
-        import traceback
-        traceback.print_exc()
         log_app_error(e, context_message="Erreur generate_ai_verdict", user=user if 'user' in locals() else None)
         raise e
 
 
-def generate_gemini_json_response(prompt, image_file=None, model_name='gemini-2.5-flash'):
+def generate_gemini_json_response(prompt, image_file=None, model_name='gemini-2.5-flash', response_schema=None,
+                                  system_instruction=None):
     """
-    Exécute une requête vers le modèle d'intelligence artificielle Gemini en forçant une sortie JSON.
-
-    Args:
-        prompt (str): L'invite textuelle définissant le contexte et la requête.
-        image_file (UploadedFile or None, optional): Fichier image optionnel. Defaults to None.
-        model_name (str, optional): Modèle Gemini ciblé. Defaults to 'gemini-2.5-flash'.
-
-    Returns:
-        dict: Le dictionnaire JSON contenant la réponse du modèle.
+    Exécute une requête vers Gemini avec un schéma de réponse strict pour éliminer la latence de formatage.
     """
     client = genai.Client()
     contents = [prompt, image_file] if image_file else prompt
 
-    response = client.models.generate_content(
-        model=model_name,
-        contents=contents,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
+    # Configure the schema and system instructions
+    config_args = {
+        "response_mime_type": "application/json",
+    }
+
+    if response_schema:
+        config_args["response_schema"] = response_schema
+
+    if system_instruction:
+        config_args["system_instruction"] = system_instruction
+
+    try:
+        response = client.models.generate_content(
+            model=model_name,
+            contents=contents,
+            config=types.GenerateContentConfig(**config_args)
         )
-    )
-    clean_text = response.text.replace('```json', '').replace('```', '').strip()
-    return json.loads(clean_text)
+        # No need to strip markdown; the SDK returns raw JSON when a schema is enforced.
+        return json.loads(response.text.strip())
+    except Exception as e:
+        logger.error(f"Erreur API Gemini: {str(e)}")
+        raise
 
 
 def log_app_error(exception, context_message="", user=None, endpoint_url=None, level=ErrorLog.LogLevels.ERROR):
