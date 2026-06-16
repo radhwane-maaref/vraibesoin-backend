@@ -238,7 +238,8 @@ def generate_reflection_questions(purchase_id):
         - Si Urgence >= 4 : Questionne l'immédiateté (Pourquoi maintenant ?).
         - Si Équivalent == 'Oui' : Confronte sur la redondance (Pourquoi un doublon ?).
         - Si Prix élevé : Demande quel arbitrage financier ou sacrifice cela implique.
-
+        -DEVISE OBLIGATOIRE : Lorsque tu mentionnes un montant ou un prix, utilise TOUJOURS et UNIQUEMENT la devise '{user.preferred_currency}'.
+        
         Génère 3 questions adaptées à ces règles. Pas d'introduction, pas de conclusion.
         """
 
@@ -309,6 +310,7 @@ def generate_ai_verdict(purchase_id):
             "Ton ton est ultra-direct, incisif, analytique mais profondément bienveillant. Tu tutoies l'utilisateur. "
             "Bannis les structures de phrases stéréotypées d'IA (ex: 'En tant que coach...', 'Il est important de...'). "
             "Va droit au but, comme un humain authentique."
+            "DEVISE OBLIGATOIRE: Lorsque tu mentionnes un montant ou un prix, utilise TOUJOURS et UNIQUEMENT la devise '{user.preferred_currency}'."
         )
 
         # 2. Contextually balanced prompt mapping financial space vs. mental space
@@ -322,7 +324,7 @@ def generate_ai_verdict(purchase_id):
         [L'INTENTION D'ACHAT]
         - Produit cible : {intention.product_name}
         - Coût de l'impulsion : {intention.product_price} {user.preferred_currency}
-
+        
         [CONVERSATION D'AUTO-ÉVALUATION]
         {qna_text}
 
