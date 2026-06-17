@@ -187,7 +187,7 @@ def extract_product_data_via_ai(image_file):
     """
     client = genai.Client()
 
-    model_name = 'gemini-3.5-flash'
+    model_name = 'gemini-3.1-pro-preview'
     img = Image.open(image_file)
     valid_categories = [choice.value for choice in ProductCategoryChoices]
     prompt = f"""
@@ -286,7 +286,7 @@ def generate_reflection_questions(purchase_id):
 
         questions_data = generate_gemini_json_response(
             prompt,
-            model_name="gemini-3.5-flash",
+            model_name="gemini-3.1-pro-preview",
             response_schema=schema,
             system_instruction=system_instruction
         )
@@ -375,7 +375,7 @@ def generate_ai_verdict(purchase_id):
         # Querying the high-speed flash model execution layer
         result = generate_gemini_json_response(
             prompt,
-            model_name="gemini-3.5-flash",
+            model_name="gemini-3.1-pro-preview",
             response_schema=schema,
             system_instruction=system_instruction
         )
