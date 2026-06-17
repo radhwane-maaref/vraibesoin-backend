@@ -187,14 +187,31 @@ def extract_product_data_via_ai(image_file):
     """
     client = genai.Client()
 
-    model_name = 'gemini-3.1-flash-lite'
+    model_name = 'gemini-3.5-flash'
     img = Image.open(image_file)
     valid_categories = [choice.value for choice in ProductCategoryChoices]
-    prompt = """
-    Extrais les informations suivantes de cette image et renvoie-les STRICTEMENT et UNIQUEMENT sous forme d'un objet JSON valide :
-    {"product_name": "iPhone 15", "product_price": 999.00, "product_category": "Smartphones"}
-    Pour la categorie, tu es obligé de choisir une parmi la liste suivante : {valid_categories}. Si tu hésites, retourne '{ProductCategoryChoices.OTHER.value}'.
-    Si une information est introuvable, mets null. Ne rajoute aucun texte Markdown autour.
+    prompt = f"""
+    Agis comme un expert en extraction de données structurées. Extrais les informations de cette image et renvoie-les STRICTEMENT sous forme d'un objet JSON valide.
+
+    [RÈGLES DE TRAITEMENT DU PRIX - TRÈS IMPORTANT]
+    - Attention à la devise locale (DT / TND) qui utilise souvent 3 décimales pour les millimes.
+    - Si le prix lu sur l'image est "55,000 dt", "55.000" ou "55,000", cela représente 55 dinars. Tu DOIS retourner le nombre décimal 55.0.
+    - Ne confonds jamais les 3 zéros des millimes avec des milliers. Réfléchis toujours à la cohérence du prix par rapport au produit.
+
+    [CATÉGORIE]
+    - Tu es obligé de choisir une catégorie EXACTE parmi cette liste : {valid_categories}.
+    - Si tu hésites ou si rien ne correspond, retourne strictement '{ProductCategoryChoices.OTHER.value}'.
+
+    [FORMAT DE SORTIE (JSON UNIQUEMENT)]
+    Exemple attendu :
+    {{
+        "product_name": "iPhone 15",
+        "product_price": 999.0,
+        "product_category": "Smartphones"
+    }}
+
+    Si une information est introuvable, utilise la valeur null.
+    Ne rajoute aucun texte introductif, aucune conclusion, et n'utilise pas de balises Markdown (comme ```json). Le premier caractère de ta réponse doit être {{ et le dernier }}.
     """
 
     return generate_gemini_json_response(prompt, image_file=img)
@@ -238,7 +255,7 @@ def generate_reflection_questions(purchase_id):
         - Si Urgence >= 4 : Questionne l'immédiateté (Pourquoi maintenant ?).
         - Si Équivalent == 'Oui' : Confronte sur la redondance (Pourquoi un doublon ?).
         - Si Prix élevé : Demande quel arbitrage financier ou sacrifice cela implique.
-        -DEVISE OBLIGATOIRE : Lorsque tu mentionnes un montant ou un prix, utilise TOUJOURS et UNIQUEMENT la devise '{user.preferred_currency}'.
+        - FORMAT DE DEVISE OBLIGATOIRE : Interdiction stricte d'utiliser le symbole Euro (€). Tu dois obligatoirement écrire le code '{user.preferred_currency}' après le montant (Exemple attendu : '{intention.product_price} {user.preferred_currency}').
         
         Génère 3 questions adaptées à ces règles. Pas d'introduction, pas de conclusion.
         """
@@ -269,12 +286,12 @@ def generate_reflection_questions(purchase_id):
 
         questions_data = generate_gemini_json_response(
             prompt,
-            model_name="gemini-3.5-flash",
+            model_name="gemini-3.1-pro-preview",
             response_schema=schema,
             system_instruction=system_instruction
         )
 
-        # Optimization: Use bulk_create to save 2 database roundtrips
+
         questions_to_create = [
             ReflectionQuestion(
                 purchase_intention=intention,
@@ -358,7 +375,7 @@ def generate_ai_verdict(purchase_id):
         # Querying the high-speed flash model execution layer
         result = generate_gemini_json_response(
             prompt,
-            model_name="gemini-3.5-flash",
+            model_name="gemini-3.1-pro-preview",
             response_schema=schema,
             system_instruction=system_instruction
         )
@@ -557,7 +574,7 @@ def check_purchase_coherence(product_name, product_category, product_price, pref
         "is_coherent": true ou false
     }}
     """
-    return generate_gemini_json_response(prompt,model_name="gemini-3.1-flash-lite")
+    return generate_gemini_json_response(prompt,model_name="gemini-3.5-flash")
 
 
 def process_income_payment(income):
