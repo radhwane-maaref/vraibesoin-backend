@@ -187,7 +187,7 @@ def extract_product_data_via_ai(image_file):
     """
     client = genai.Client()
 
-    model_name = 'gemini-3.1-pro-preview'
+    model_name = 'gemini-3-flash-preview'
     img = Image.open(image_file)
     valid_categories = [choice.value for choice in ProductCategoryChoices]
     prompt = f"""
@@ -255,7 +255,7 @@ def generate_reflection_questions(purchase_id):
         - Si Urgence >= 4 : Questionne l'immédiateté (Pourquoi maintenant ?).
         - Si Équivalent == 'Oui' : Confronte sur la redondance (Pourquoi un doublon ?).
         - Si Prix élevé : Demande quel arbitrage financier ou sacrifice cela implique.
-        - FORMAT DE DEVISE OBLIGATOIRE : Interdiction stricte d'utiliser le symbole Euro (€). Tu dois obligatoirement écrire le code '{user.preferred_currency}' après le montant (Exemple attendu : '{intention.product_price} {user.preferred_currency}').
+        - FORMAT DE DEVISE OBLIGATOIRE : Interdiction stricte d'utiliser le symbole Euro (€). Tu dois obligatoirement écrire le code '{user.preferred_currency}' après le montant (Exemple attendu : '{intention.product_price} {user.preferred_currency}') dans la question.
         
         Génère 3 questions adaptées à ces règles. Pas d'introduction, pas de conclusion.
         """
