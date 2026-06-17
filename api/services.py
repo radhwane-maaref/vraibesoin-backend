@@ -286,7 +286,7 @@ def generate_reflection_questions(purchase_id):
 
         questions_data = generate_gemini_json_response(
             prompt,
-            model_name="gemini-3.1-pro-preview",
+            model_name="gemini-3.5-flash",
             response_schema=schema,
             system_instruction=system_instruction
         )
@@ -375,7 +375,7 @@ def generate_ai_verdict(purchase_id):
         # Querying the high-speed flash model execution layer
         result = generate_gemini_json_response(
             prompt,
-            model_name="gemini-3.1-pro-preview",
+            model_name="gemini-3.5-flash",
             response_schema=schema,
             system_instruction=system_instruction
         )
