@@ -238,7 +238,6 @@ def generate_reflection_questions(purchase_id):
             "Ton but est de stopper les achats impulsifs. Ton style est incisif, percutant et minimaliste. "
             "Tu tutoies l'utilisateur. "
             f"Directives de comportement : {current_rigor}"
-            "- FORMAT DE DEVISE OBLIGATOIRE : Interdiction stricte d'utiliser le symbole Euro (€). Tu dois obligatoirement écrire le code '{user.preferred_currency}' après le montant (Exemple attendu : '{intention.product_price} {user.preferred_currency}') dans la question."
         )
 
         # 2. Prompt: Token-optimized context without wasteful fluff
@@ -277,7 +276,7 @@ def generate_reflection_questions(purchase_id):
                         "minItems": 3,
                         "maxItems": 3,
                         "items": {"type": "STRING"},
-                        "description": "3 réponses types de l'utilisateur (ex: 'Oui, totalement', 'Honnêtement non', 'Je peux attendre'). Max 8 mots par option."
+                        "description": "3 réponses types de l'utilisateur (ex: 'Oui, totalement', 'Honnêtement non', 'Je peux attendre'). Max 8 mots par option.Utilisez OBLIGATOIREMENT la devise '{user.preferred_currency}' et n'utilisez JAMAIS le symbole €"
                     }
                 },
                 "required": ["question", "options"]
@@ -510,7 +509,7 @@ def fetch_and_cache_daily_advice(user_id, execute_now=False):
             user.socio_professional_categories) if user.socio_professional_categories else "Non spécifiée"
         goals = ", ".join(user.financial_goals) if user.financial_goals else "Épargne générale"
         rigor = user.evaluation_rigor or "Équilibré"
-        currency = user.preferred_currency or "€"
+        currency = user.preferred_currency or "TND"
 
         prompt = f"""
         Tu es le Coach IA financier de l'application 'Vrai Besoin'.
