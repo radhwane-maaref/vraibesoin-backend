@@ -187,7 +187,7 @@ def extract_product_data_via_ai(image_file):
     """
     client = genai.Client()
 
-    model_name = 'gemini-3-flash-preview'
+    model_name = 'gemini-3.1-pro-preview'
     img = Image.open(image_file)
     valid_categories = [choice.value for choice in ProductCategoryChoices]
     prompt = f"""
