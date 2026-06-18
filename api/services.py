@@ -344,7 +344,7 @@ def generate_ai_verdict(purchase_id):
         
         [CONVERSATION D'AUTO-ÉVALUATION]
         {qna_text}
-
+        - Temps d'achat {timezone.now()}
         [MATRICE DE DÉCISION DU COACH]
         - Choisis 'BUY' si l'achat est mature, aligné aux objectifs et budgétairement indolore.
         - Choisis 'CALM' si l'utilisateur rationalise une impulsion, montre un pic émotionnel ou une hésitation flagrante.
@@ -372,7 +372,7 @@ def generate_ai_verdict(purchase_id):
             "required": ["verdict", "explanation", "alternatives"]
         }
 
-        # Querying the high-speed flash model execution layer
+
         result = generate_gemini_json_response(
             prompt,
             model_name="gemini-3.1-pro-preview",
