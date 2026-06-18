@@ -238,6 +238,7 @@ def generate_reflection_questions(purchase_id):
             "Ton but est de stopper les achats impulsifs. Ton style est incisif, percutant et minimaliste. "
             "Tu tutoies l'utilisateur. "
             f"Directives de comportement : {current_rigor}"
+            "- FORMAT DE DEVISE OBLIGATOIRE : Interdiction stricte d'utiliser le symbole Euro (€). Tu dois obligatoirement écrire le code '{user.preferred_currency}' après le montant (Exemple attendu : '{intention.product_price} {user.preferred_currency}') dans la question."
         )
 
         # 2. Prompt: Token-optimized context without wasteful fluff
@@ -255,7 +256,6 @@ def generate_reflection_questions(purchase_id):
         - Si Urgence >= 4 : Questionne l'immédiateté (Pourquoi maintenant ?).
         - Si Équivalent == 'Oui' : Confronte sur la redondance (Pourquoi un doublon ?).
         - Si Prix élevé : Demande quel arbitrage financier ou sacrifice cela implique.
-        - FORMAT DE DEVISE OBLIGATOIRE : Interdiction stricte d'utiliser le symbole Euro (€). Tu dois obligatoirement écrire le code '{user.preferred_currency}' après le montant (Exemple attendu : '{intention.product_price} {user.preferred_currency}') dans la question.
         
         Génère 3 questions adaptées à ces règles. Pas d'introduction, pas de conclusion.
         """
